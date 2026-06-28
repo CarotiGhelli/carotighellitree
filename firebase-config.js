@@ -1,15 +1,13 @@
-// ⚠️  COMPILA QUESTO FILE con i valori del tuo progetto Firebase
-//     (segui le istruzioni nel README — Passaggio A)
-//     Puoi lasciare questo file nel repository pubblico: le API key Firebase
-//     non sono segrete, la sicurezza è gestita dalle Firestore Rules.
+// Configurazione Firebase — Caroti Ghelli Tree
+// Le chiavi API Firebase non sono segrete: la sicurezza è nelle Firestore Rules.
 
 const firebaseConfig = {
-  apiKey:            "INSERISCI_API_KEY",
-  authDomain:        "INSERISCI_AUTH_DOMAIN",
-  projectId:         "INSERISCI_PROJECT_ID",
-  storageBucket:     "INSERISCI_STORAGE_BUCKET",
-  messagingSenderId: "INSERISCI_MESSAGING_SENDER_ID",
-  appId:             "INSERISCI_APP_ID"
+  apiKey:            "AIzaSyDr2jWujo1-uV6ws2HY9TKmPc5cXQJRkJg",
+  authDomain:        "carotighellitree.firebaseapp.com",
+  projectId:         "carotighellitree",
+  storageBucket:     "carotighellitree.firebasestorage.app",
+  messagingSenderId: "28117552982",
+  appId:             "1:28117552982:web:71ef81c1959edb329750f7"
 };
 
 firebase.initializeApp(firebaseConfig);
