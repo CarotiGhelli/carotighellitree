@@ -17,6 +17,7 @@
 
   const CARD_W = 160, CARD_H = 64;
   const H_GAP = 26, COUPLE_GAP = 26, V_GAP = 116, TREE_GAP = 80;
+  const SETTLE_ITERS = 0; // rifinitura: la riserva ricorsiva è già pulita
 
   // ============================================================ UTIL
   const $ = (sel) => document.querySelector(sel);
@@ -270,7 +271,62 @@
       for (const b of blocks) for (let j = 0; j < b.c; j++) { const center = b.v + S[i]; us[i]._x = center - w[i] / 2; i++; }
     }
 
-    for (let iter = 0; iter < 16; iter++) {
+    // Riserva di spazio ricorsiva (stile Reingold–Tilford sull'albero delle coppie):
+    // ogni coppia riserva una banda per i suoi discendenti, così i sottoalberi non
+    // si intrecciano mai e i collegamenti restano corti e locali (come MyHeritage).
+    // Figli "primari": solo le unità di cui QUESTA coppia è il genitore del membro
+    // di sangue dominante. Così l'albero di riserva è un vero albero (ogni unità ha
+    // un solo genitore) e nessuno viene rivendicato due volte / stirato.
+    const childUnitsOf = (u) => {
+      const seen = new Set(), res = [];
+      for (const m of u.members) for (const c of childMap[m]) {
+        const cu = unitOf[c];
+        if (cu && cu.g > u.g && !seen.has(cu) && parentMap[cu.primary].includes(m)) { seen.add(cu); res.push(cu); }
+      }
+      res.sort((a, b) => a._i - b._i);
+      return res;
+    };
+    // Tutti i figli (anche quelli "acquisiti" tramite il coniuge): serve per
+    // posizionare gli antenati acquisiti vicino ai loro discendenti.
+    const childUnitsAll = (u) => {
+      const seen = new Set(), res = [];
+      for (const m of u.members) for (const c of childMap[m]) {
+        const cu = unitOf[c];
+        if (cu && cu.g > u.g && !seen.has(cu)) { seen.add(cu); res.push(cu); }
+      }
+      return res;
+    };
+    let nextFree = 0;
+    const placedU = new Set();
+    function placeUnit(u) {
+      if (placedU.has(u)) return u._cx;
+      placedU.add(u);
+      const kids = childUnitsOf(u);
+      kids.filter((cu) => !placedU.has(cu)).forEach(placeUnit);
+      // Centra sui figli primari; se non ne ha (coppia di soli antenati acquisiti),
+      // ripiega sul figlio acquisito così l'antenato sta sopra il discendente.
+      const centerKids = kids.length ? kids : childUnitsAll(u);
+      const cxs = centerKids.map((cu) => cu._cx).filter((x) => x != null);
+      if (cxs.length) {
+        u._cx = (Math.min(...cxs) + Math.max(...cxs)) / 2;
+      } else {
+        u._cx = nextFree + unitWidth(u) / 2;
+        nextFree += unitWidth(u) + H_GAP;
+      }
+      return u._cx;
+    }
+    const descCount = (u, seen) => { if (seen.has(u)) return 0; seen.add(u); let n = 1; for (const cu of childUnitsOf(u)) n += descCount(cu, seen); return n; };
+    rowUnits[0].slice().sort((a, b) => descCount(b, new Set()) - descCount(a, new Set())).forEach(placeUnit);
+    for (let g = 0; g <= maxGen; g++) for (const u of rowUnits[g]) if (!placedU.has(u)) placeUnit(u);
+    for (let g = 0; g <= maxGen; g++) for (const u of rowUnits[g]) u._x = u._cx - unitWidth(u) / 2;
+    // L'ordine dell'array di riga deve rispecchiare l'ordine spaziale prodotto dalla
+    // riserva, altrimenti il PAVA (che assume l'array già ordinato) scombinerebbe tutto.
+    for (let g = 0; g <= maxGen; g++) { rowUnits[g].sort((a, b) => a._x - b._x); reindex(g); }
+    for (let g = 0; g <= maxGen; g++) resolveRow(g);
+
+    // Rifinitura leggera: pochi passaggi per allineare meglio genitori e figli,
+    // partendo già da una disposizione pulita (PAVA garantisce niente sovrapposizioni).
+    for (let iter = 0; iter < SETTLE_ITERS; iter++) {
       for (let g = maxGen - 1; g >= 0; g--) { for (const u of rowUnits[g]) { const t = centersDown(u); if (t != null) u._x = t - unitWidth(u) / 2; } resolveRow(g); }
       for (let g = 1; g <= maxGen; g++) { for (const u of rowUnits[g]) { const t = centersUp(u); if (t != null) u._x = t - unitWidth(u) / 2; } resolveRow(g); }
     }
@@ -280,6 +336,23 @@
     for (let g = 0; g <= maxGen; g++) {
       const y = g * V_GAP;
       for (const u of rowUnits[g]) { let x = u._x; for (const m of u.members) { pos[m] = { x, y }; x += CARD_W + COUPLE_GAP; } }
+    }
+
+    // In una coppia, metti ogni membro dal lato dei propri genitori: evita che i
+    // due connettori verso le rispettive famiglie si incrocino.
+    const parentCenterX = (m) => {
+      const a = [];
+      for (const p of parentMap[m]) if (pos[p] && gen[p] === gen[m] - 1) a.push(pos[p].x + CARD_W / 2);
+      return a.length ? avg(a) : null;
+    };
+    for (let g = 0; g <= maxGen; g++) for (const u of rowUnits[g]) {
+      if (u.members.length !== 2) continue;
+      const [a, b] = u.members;
+      const pa = parentCenterX(a), pb = parentCenterX(b);
+      if (pa == null || pb == null) continue;
+      const aLeft = pos[a].x < pos[b].x;
+      const leftP = aLeft ? pa : pb, rightP = aLeft ? pb : pa;
+      if (leftP > rightP + 1) { const t = pos[a].x; pos[a].x = pos[b].x; pos[b].x = t; }
     }
 
     // Normalizza origine
