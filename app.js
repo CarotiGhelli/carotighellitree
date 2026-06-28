@@ -114,9 +114,60 @@
     });
   }
 
+  // ============================================================ RAMI COMPRESSI
+  // collapsedUp: insieme di persone di cui è nascosto il ramo ascendente (la "dinastia").
+  // Preferenza LOCALE (non condivisa): salvata in localStorage.
+  const COLLAPSE_KEY = "albero-collapsed-v1";
+  let collapsedUp = new Set();
+  function saveCollapsed() { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedUp])); } catch (_) {} }
+  function loadCollapsed() { try { const a = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]"); collapsedUp = new Set(a); } catch (_) { collapsedUp = new Set(); } }
+
+  function personHasParents(id) {
+    return state.families.some((f) => f.children.includes(id) && (f.husb || f.wife));
+  }
+
+  // Calcola le persone nascoste: per ogni persona "compressa" si nasconde tutto ciò che
+  // è raggiungibile dai suoi genitori SENZA ripassare da lei (la sua dinastia ascendente).
+  function computeHidden() {
+    const hidden = new Set();
+    if (!collapsedUp.size) return hidden;
+    const byId = {}; state.persons.forEach((p) => (byId[p.id] = p));
+    const parent = {}, child = {}, spouse = {};
+    state.persons.forEach((p) => { parent[p.id] = []; child[p.id] = []; spouse[p.id] = []; });
+    for (const f of state.families) {
+      const h = f.husb && byId[f.husb] ? f.husb : null;
+      const w = f.wife && byId[f.wife] ? f.wife : null;
+      if (h && w) { spouse[h].push(w); spouse[w].push(h); }
+      for (const c of f.children) { if (!byId[c]) continue; if (h) { parent[c].push(h); child[h].push(c); } if (w) { parent[c].push(w); child[w].push(c); } }
+    }
+    for (const P of collapsedUp) {
+      if (!byId[P] || !parent[P] || !parent[P].length) continue;
+      const R = new Set([P]); const q = [...parent[P]];
+      while (q.length) {
+        const n = q.pop(); if (R.has(n)) continue; R.add(n);
+        for (const m of parent[n]) if (!R.has(m)) q.push(m);
+        for (const m of child[n]) if (!R.has(m)) q.push(m);
+        for (const m of spouse[n]) if (!R.has(m)) q.push(m);
+      }
+      R.delete(P);
+      for (const n of R) hidden.add(n);
+    }
+    for (const P of collapsedUp) hidden.delete(P);
+    return hidden;
+  }
+
+  function toggleCollapse(id) {
+    if (collapsedUp.has(id)) collapsedUp.delete(id); else collapsedUp.add(id);
+    saveCollapsed(); render();
+  }
+
   // ============================================================ LAYOUT (a livelli, stile Sugiyama)
   function computeLayout() {
-    const persons = state.persons, families = state.families;
+    const hidden = computeHidden();
+    const persons = state.persons.filter((p) => !hidden.has(p.id));
+    const families = state.families
+      .map((f) => ({ id: f.id, husb: f.husb && !hidden.has(f.husb) ? f.husb : null, wife: f.wife && !hidden.has(f.wife) ? f.wife : null, children: f.children.filter((c) => !hidden.has(c)) }))
+      .filter((f) => f.husb || f.wife || f.children.length);
     if (!persons.length) return { pos: {}, linksSvg: "", width: 0, height: 0 };
 
     const byId = {}; persons.forEach((p) => (byId[p.id] = p));
@@ -437,6 +488,19 @@
     add.style.top = (pos.y + CARD_H - 4) + "px";
     add.addEventListener("click", (e) => { e.stopPropagation(); addChildTo(p.id); });
     cardsEl.appendChild(add);
+
+    // Pulsante comprimi/espandi il ramo ascendente (la "dinastia"), in alto
+    if (personHasParents(p.id)) {
+      const isCollapsed = collapsedUp.has(p.id);
+      const tog = document.createElement("div");
+      tog.className = "collapse-btn" + (isCollapsed ? " collapsed" : "");
+      tog.textContent = isCollapsed ? "+" : "–";
+      tog.title = isCollapsed ? "Mostra gli antenati" : "Nascondi gli antenati (per evitare sovrapposizioni tra rami)";
+      tog.style.left = (pos.x + CARD_W / 2 - 11) + "px";
+      tog.style.top = (pos.y - 14) + "px";
+      tog.addEventListener("click", (e) => { e.stopPropagation(); toggleCollapse(p.id); });
+      cardsEl.appendChild(tog);
+    }
     return el;
   }
 
@@ -731,6 +795,7 @@
     bindUI();
     setupPanZoom();
     loadView();
+    loadCollapsed();
     startListening();
   }
 

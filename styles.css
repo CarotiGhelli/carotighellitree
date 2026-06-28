@@ -118,6 +118,18 @@ html, body {
 }
 .add-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* Pulsante comprimi/espandi il ramo ascendente */
+.collapse-btn {
+  position: absolute; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; border: 1px solid var(--line); color: var(--muted);
+  font-size: 16px; font-weight: 700; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: var(--shadow); z-index: 6;
+}
+.collapse-btn:hover { background: #f3f6f9; border-color: #aeb9c4; }
+.collapse-btn.collapsed { background: #fff4d6; border-color: #e8c570; color: #b8860b; }
+.collapse-btn.collapsed:hover { background: #ffeebb; }
+
 /* ---------- Editor panel ---------- */
 .overlay { position: fixed; inset: 0; background: rgba(25,35,45,.35); z-index: 40; }
 .editor {
