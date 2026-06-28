@@ -118,19 +118,32 @@
   // collapsedUp: insieme di persone di cui è nascosto il ramo ascendente (la "dinastia").
   // Preferenza LOCALE (non condivisa): salvata in localStorage.
   const COLLAPSE_KEY = "albero-collapsed-v1";
-  let collapsedUp = new Set();
-  function saveCollapsed() { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedUp])); } catch (_) {} }
-  function loadCollapsed() { try { const a = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]"); collapsedUp = new Set(a); } catch (_) { collapsedUp = new Set(); } }
+  let collapsedUp = new Set();    // rami ASCENDENTI nascosti
+  let collapsedDown = new Set();  // rami DISCENDENTI nascosti
+  function saveCollapsed() { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify({ up: [...collapsedUp], down: [...collapsedDown] })); } catch (_) {} }
+  function loadCollapsed() {
+    try {
+      const d = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "{}");
+      // retro-compatibilità: vecchio formato = array di soli ascendenti
+      if (Array.isArray(d)) { collapsedUp = new Set(d); collapsedDown = new Set(); }
+      else { collapsedUp = new Set(d.up || []); collapsedDown = new Set(d.down || []); }
+    } catch (_) { collapsedUp = new Set(); collapsedDown = new Set(); }
+  }
 
   function personHasParents(id) {
     return state.families.some((f) => f.children.includes(id) && (f.husb || f.wife));
   }
+  function personHasChildren(id) {
+    return state.families.some((f) => (f.husb === id || f.wife === id) && f.children.length);
+  }
 
-  // Calcola le persone nascoste: per ogni persona "compressa" si nasconde tutto ciò che
-  // è raggiungibile dai suoi genitori SENZA ripassare da lei (la sua dinastia ascendente).
+  // Calcola le persone nascoste a causa dei rami compressi.
+  // Ascendenti: dai genitori, senza ripassare dalla persona (tutta la dinastia su+intorno).
+  // Discendenti: dai figli, senza risalire ai genitori (così non si nascondono per errore
+  //   gli antenati dei coniugi sposati nel ramo).
   function computeHidden() {
     const hidden = new Set();
-    if (!collapsedUp.size) return hidden;
+    if (!collapsedUp.size && !collapsedDown.size) return hidden;
     const byId = {}; state.persons.forEach((p) => (byId[p.id] = p));
     const parent = {}, child = {}, spouse = {};
     state.persons.forEach((p) => { parent[p.id] = []; child[p.id] = []; spouse[p.id] = []; });
@@ -140,24 +153,27 @@
       if (h && w) { spouse[h].push(w); spouse[w].push(h); }
       for (const c of f.children) { if (!byId[c]) continue; if (h) { parent[c].push(h); child[h].push(c); } if (w) { parent[c].push(w); child[w].push(c); } }
     }
-    for (const P of collapsedUp) {
-      if (!byId[P] || !parent[P] || !parent[P].length) continue;
-      const R = new Set([P]); const q = [...parent[P]];
+    const flood = (seeds, blocked, useParent) => {
+      const R = new Set([blocked]); const q = [...seeds];
       while (q.length) {
         const n = q.pop(); if (R.has(n)) continue; R.add(n);
-        for (const m of parent[n]) if (!R.has(m)) q.push(m);
         for (const m of child[n]) if (!R.has(m)) q.push(m);
         for (const m of spouse[n]) if (!R.has(m)) q.push(m);
+        if (useParent) for (const m of parent[n]) if (!R.has(m)) q.push(m);
       }
-      R.delete(P);
-      for (const n of R) hidden.add(n);
-    }
+      R.delete(blocked);
+      R.forEach((n) => hidden.add(n));
+    };
+    for (const P of collapsedUp) if (byId[P] && parent[P] && parent[P].length) flood(parent[P], P, true);
+    for (const P of collapsedDown) if (byId[P] && child[P] && child[P].length) flood(child[P], P, false);
     for (const P of collapsedUp) hidden.delete(P);
+    for (const P of collapsedDown) hidden.delete(P);
     return hidden;
   }
 
-  function toggleCollapse(id) {
-    if (collapsedUp.has(id)) collapsedUp.delete(id); else collapsedUp.add(id);
+  function toggleCollapse(id, dir) {
+    const set = dir === "down" ? collapsedDown : collapsedUp;
+    if (set.has(id)) set.delete(id); else set.add(id);
     saveCollapsed(); render();
   }
 
@@ -482,24 +498,38 @@
       ${living ? `<span class="living-dot" title="In vita"></span>` : ""}
       <span class="edit-pencil">✎</span>`;
     el.addEventListener("click", (e) => { e.stopPropagation(); openEditor(p.id); });
-    const add = document.createElement("div");
-    add.className = "add-btn"; add.textContent = "+"; add.title = "Aggiungi figlio/a";
-    add.style.left = (pos.x + CARD_W / 2 - 11) + "px";
-    add.style.top = (pos.y + CARD_H - 4) + "px";
-    add.addEventListener("click", (e) => { e.stopPropagation(); addChildTo(p.id); });
-    cardsEl.appendChild(add);
 
-    // Pulsante comprimi/espandi il ramo ascendente (la "dinastia"), in alto
+    // Pulsante SOPRA: comprimi/espandi gli ASCENDENTI (la "dinastia" verso l'alto)
     if (personHasParents(p.id)) {
-      const isCollapsed = collapsedUp.has(p.id);
+      const isC = collapsedUp.has(p.id);
       const tog = document.createElement("div");
-      tog.className = "collapse-btn" + (isCollapsed ? " collapsed" : "");
-      tog.textContent = isCollapsed ? "+" : "–";
-      tog.title = isCollapsed ? "Mostra gli antenati" : "Nascondi gli antenati (per evitare sovrapposizioni tra rami)";
+      tog.className = "collapse-btn" + (isC ? " collapsed" : "");
+      tog.textContent = isC ? "+" : "–";
+      tog.title = isC ? "Mostra gli ascendenti" : "Nascondi gli ascendenti (verso l'alto)";
       tog.style.left = (pos.x + CARD_W / 2 - 11) + "px";
       tog.style.top = (pos.y - 14) + "px";
-      tog.addEventListener("click", (e) => { e.stopPropagation(); toggleCollapse(p.id); });
+      tog.addEventListener("click", (e) => { e.stopPropagation(); toggleCollapse(p.id, "up"); });
       cardsEl.appendChild(tog);
+    }
+
+    // Pulsante SOTTO: se ha figli, comprimi/espandi i DISCENDENTI; altrimenti "+" per aggiungere
+    if (personHasChildren(p.id)) {
+      const isC = collapsedDown.has(p.id);
+      const tog = document.createElement("div");
+      tog.className = "collapse-btn" + (isC ? " collapsed" : "");
+      tog.textContent = isC ? "+" : "–";
+      tog.title = isC ? "Mostra i discendenti" : "Nascondi i discendenti (verso il basso)";
+      tog.style.left = (pos.x + CARD_W / 2 - 11) + "px";
+      tog.style.top = (pos.y + CARD_H - 8) + "px";
+      tog.addEventListener("click", (e) => { e.stopPropagation(); toggleCollapse(p.id, "down"); });
+      cardsEl.appendChild(tog);
+    } else {
+      const add = document.createElement("div");
+      add.className = "add-btn"; add.textContent = "+"; add.title = "Aggiungi figlio/a";
+      add.style.left = (pos.x + CARD_W / 2 - 11) + "px";
+      add.style.top = (pos.y + CARD_H - 4) + "px";
+      add.addEventListener("click", (e) => { e.stopPropagation(); addChildTo(p.id); });
+      cardsEl.appendChild(add);
     }
     return el;
   }
