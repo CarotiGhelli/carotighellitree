@@ -117,33 +117,16 @@
   // ============================================================ RAMI COMPRESSI
   // collapsedUp: insieme di persone di cui è nascosto il ramo ascendente (la "dinastia").
   // Preferenza LOCALE (non condivisa): salvata in localStorage.
-  const COLLAPSE_KEY = "albero-collapsed-v1";
-  let collapsedUp = new Set();    // rami ASCENDENTI nascosti
-  let collapsedDown = new Set();  // rami DISCENDENTI nascosti
-  function saveCollapsed() { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify({ up: [...collapsedUp], down: [...collapsedDown] })); } catch (_) {} }
-  function loadCollapsed() {
-    try {
-      const d = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "{}");
-      // retro-compatibilità: vecchio formato = array di soli ascendenti
-      if (Array.isArray(d)) { collapsedUp = new Set(d); collapsedDown = new Set(); }
-      else { collapsedUp = new Set(d.up || []); collapsedDown = new Set(d.down || []); }
-    } catch (_) { collapsedUp = new Set(); collapsedDown = new Set(); }
-  }
+  // Scelta della linea genealogica per ogni coppia "in conflitto" (entrambi i coniugi
+  // hanno ascendenza nell'albero). Default: linea MASCHILE (marito). 'W' = linea femminile.
+  // Preferenza LOCALE (per dispositivo), non condivisa.
+  const LINEAGE_KEY = "albero-lineage-v1";
+  let lineageChoice = {}; // famId -> 'H' | 'W'
+  function saveLineage() { try { localStorage.setItem(LINEAGE_KEY, JSON.stringify(lineageChoice)); } catch (_) {} }
+  function loadLineage() { try { lineageChoice = JSON.parse(localStorage.getItem(LINEAGE_KEY) || "{}") || {}; } catch (_) { lineageChoice = {}; } }
 
-  function personHasParents(id) {
-    return state.families.some((f) => f.children.includes(id) && (f.husb || f.wife));
-  }
-  function personHasChildren(id) {
-    return state.families.some((f) => (f.husb === id || f.wife === id) && f.children.length);
-  }
-
-  // Calcola le persone nascoste a causa dei rami compressi.
-  // Ascendenti: dai genitori, senza ripassare dalla persona (tutta la dinastia su+intorno).
-  // Discendenti: dai figli, senza risalire ai genitori (così non si nascondono per errore
-  //   gli antenati dei coniugi sposati nel ramo).
-  function computeHidden() {
-    const hidden = new Set();
-    if (!collapsedUp.size && !collapsedDown.size) return hidden;
+  // Mappe di parentela
+  function buildGraph() {
     const byId = {}; state.persons.forEach((p) => (byId[p.id] = p));
     const parent = {}, child = {}, spouse = {};
     state.persons.forEach((p) => { parent[p.id] = []; child[p.id] = []; spouse[p.id] = []; });
@@ -153,28 +136,62 @@
       if (h && w) { spouse[h].push(w); spouse[w].push(h); }
       for (const c of f.children) { if (!byId[c]) continue; if (h) { parent[c].push(h); child[h].push(c); } if (w) { parent[c].push(w); child[w].push(c); } }
     }
-    const flood = (seeds, blocked, useParent) => {
-      const R = new Set([blocked]); const q = [...seeds];
-      while (q.length) {
-        const n = q.pop(); if (R.has(n)) continue; R.add(n);
-        for (const m of child[n]) if (!R.has(m)) q.push(m);
-        for (const m of spouse[n]) if (!R.has(m)) q.push(m);
-        if (useParent) for (const m of parent[n]) if (!R.has(m)) q.push(m);
+    return { byId, parent, child, spouse };
+  }
+
+  // Coppia "in conflitto" di cui la persona fa parte (entrambi i coniugi hanno ascendenza).
+  function clashCoupleOf(id) {
+    const g = buildGraph();
+    for (const f of state.families) {
+      if ((f.husb === id || f.wife === id) && f.husb && f.wife && g.byId[f.husb] && g.byId[f.wife]) {
+        if (g.parent[f.husb].length && g.parent[f.wife].length) return f;
       }
-      R.delete(blocked);
-      R.forEach((n) => hidden.add(n));
-    };
-    for (const P of collapsedUp) if (byId[P] && parent[P] && parent[P].length) flood(parent[P], P, true);
-    for (const P of collapsedDown) if (byId[P] && child[P] && child[P].length) flood(child[P], P, false);
-    for (const P of collapsedUp) hidden.delete(P);
-    for (const P of collapsedDown) hidden.delete(P);
+    }
+    return null;
+  }
+  function chosenSpouse(f) { return (lineageChoice[f.id] || "H") === "H" ? f.husb : f.wife; }
+  function closedSpouse(f) { return (lineageChoice[f.id] || "H") === "H" ? f.wife : f.husb; }
+
+  // Persone nascoste: per ogni coppia in conflitto si nasconde la DINASTIA del coniuge
+  // non scelto. Si "inonda" partendo dai suoi genitori, bloccando il coniuge stesso:
+  // così restano visibili lui e i suoi discendenti, mentre spariscono i suoi antenati
+  // e i rami collaterali (fratelli ecc.) di quella dinastia.
+  function computeHidden() {
+    const g = buildGraph();
+    const clashFams = state.families.filter((f) =>
+      f.husb && f.wife && g.byId[f.husb] && g.byId[f.wife] && g.parent[f.husb].length && g.parent[f.wife].length);
+    if (!clashFams.length) return new Set();
+
+    const hidden = new Set();
+    // 1) Nascondi l'ASCENDENZA (antenati diretti, solo verso l'alto) del coniuge non scelto.
+    //    Solo verso l'alto: niente cascata verso i discendenti.
+    for (const f of clashFams) {
+      const cs = closedSpouse(f);
+      const stack = [...g.parent[cs]];
+      while (stack.length) { const a = stack.pop(); if (hidden.has(a)) continue; hidden.add(a); for (const p of g.parent[a]) stack.push(p); }
+    }
+    // Un coniuge scelto/non scelto (mostrato nella coppia) non va mai nascosto.
+    for (const f of clashFams) { hidden.delete(chosenSpouse(f)); hidden.delete(closedSpouse(f)); }
+    // 2) Pulizia: nascondi i collaterali "foglia" (senza figli) i cui genitori sono
+    //    tutti nascosti — così non restano carte orfane staccate (es. un fratello del
+    //    coniuge i cui genitori sono ora nascosti). Non tocca chi ha discendenti.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const p of state.persons) {
+        if (hidden.has(p.id)) continue;
+        if (g.child[p.id].length === 0 && g.parent[p.id].length && g.parent[p.id].every((x) => hidden.has(x))) { hidden.add(p.id); changed = true; }
+      }
+    }
+    for (const f of clashFams) { hidden.delete(chosenSpouse(f)); hidden.delete(closedSpouse(f)); }
     return hidden;
   }
 
-  function toggleCollapse(id, dir) {
-    const set = dir === "down" ? collapsedDown : collapsedUp;
-    if (set.has(id)) set.delete(id); else set.add(id);
-    saveCollapsed(); render();
+  function toggleLineage(id) {
+    const f = clashCoupleOf(id);
+    if (!f) return;
+    lineageChoice[f.id] = (lineageChoice[f.id] || "H") === "H" ? "W" : "H";
+    saveLineage(); render();
   }
 
   // ============================================================ LAYOUT (a livelli, stile Sugiyama)
@@ -460,9 +477,25 @@
 
   // ============================================================ RENDER
   let lastLayout = null;
+  let currentClash = {}; // id -> { famId, chosen:bool }  (coppie in conflitto, per render)
+
+  // Precalcola, una volta per render, chi è in una coppia "in conflitto" e quale lato è scelto
+  function computeClashMap() {
+    const g = buildGraph();
+    const map = {};
+    for (const f of state.families) {
+      if (f.husb && f.wife && g.byId[f.husb] && g.byId[f.wife] && g.parent[f.husb].length && g.parent[f.wife].length) {
+        const ch = (lineageChoice[f.id] || "H") === "H" ? f.husb : f.wife;
+        if (!map[f.husb]) map[f.husb] = { famId: f.id, chosen: ch === f.husb };
+        if (!map[f.wife]) map[f.wife] = { famId: f.id, chosen: ch === f.wife };
+      }
+    }
+    return map;
+  }
 
   function render() {
     cardsEl.innerHTML = "";
+    currentClash = computeClashMap();
     const layout = computeLayout();
     lastLayout = layout;
     $("#emptyHint").hidden = state.persons.length > 0;
@@ -499,37 +532,28 @@
       <span class="edit-pencil">✎</span>`;
     el.addEventListener("click", (e) => { e.stopPropagation(); openEditor(p.id); });
 
-    // Pulsante SOPRA: comprimi/espandi gli ASCENDENTI (la "dinastia" verso l'alto)
-    if (personHasParents(p.id)) {
-      const isC = collapsedUp.has(p.id);
+    // Aggiungi figlio/a (in basso)
+    const add = document.createElement("div");
+    add.className = "add-btn"; add.textContent = "+"; add.title = "Aggiungi figlio/a";
+    add.style.left = (pos.x + CARD_W / 2 - 11) + "px";
+    add.style.top = (pos.y + CARD_H - 4) + "px";
+    add.addEventListener("click", (e) => { e.stopPropagation(); addChildTo(p.id); });
+    cardsEl.appendChild(add);
+
+    // Pulsante SOPRA: scelta della linea genealogica (solo se la coppia ha entrambe
+    // le ascendenze). Se la mia linea è mostrata = "–"; se nascosta = "+".
+    const ci = currentClash[p.id];
+    if (ci) {
       const tog = document.createElement("div");
-      tog.className = "collapse-btn" + (isC ? " collapsed" : "");
-      tog.textContent = isC ? "+" : "–";
-      tog.title = isC ? "Mostra gli ascendenti" : "Nascondi gli ascendenti (verso l'alto)";
+      tog.className = "collapse-btn" + (ci.chosen ? "" : " collapsed");
+      tog.textContent = ci.chosen ? "–" : "+";
+      tog.title = ci.chosen
+        ? `Nascondi la linea di ${fullName(p)} e mostra quella del coniuge`
+        : `Mostra la linea di ${fullName(p)} (nasconde quella del coniuge)`;
       tog.style.left = (pos.x + CARD_W / 2 - 11) + "px";
       tog.style.top = (pos.y - 14) + "px";
-      tog.addEventListener("click", (e) => { e.stopPropagation(); toggleCollapse(p.id, "up"); });
+      tog.addEventListener("click", (e) => { e.stopPropagation(); toggleLineage(p.id); });
       cardsEl.appendChild(tog);
-    }
-
-    // Pulsante SOTTO: se ha figli, comprimi/espandi i DISCENDENTI; altrimenti "+" per aggiungere
-    if (personHasChildren(p.id)) {
-      const isC = collapsedDown.has(p.id);
-      const tog = document.createElement("div");
-      tog.className = "collapse-btn" + (isC ? " collapsed" : "");
-      tog.textContent = isC ? "+" : "–";
-      tog.title = isC ? "Mostra i discendenti" : "Nascondi i discendenti (verso il basso)";
-      tog.style.left = (pos.x + CARD_W / 2 - 11) + "px";
-      tog.style.top = (pos.y + CARD_H - 8) + "px";
-      tog.addEventListener("click", (e) => { e.stopPropagation(); toggleCollapse(p.id, "down"); });
-      cardsEl.appendChild(tog);
-    } else {
-      const add = document.createElement("div");
-      add.className = "add-btn"; add.textContent = "+"; add.title = "Aggiungi figlio/a";
-      add.style.left = (pos.x + CARD_W / 2 - 11) + "px";
-      add.style.top = (pos.y + CARD_H - 4) + "px";
-      add.addEventListener("click", (e) => { e.stopPropagation(); addChildTo(p.id); });
-      cardsEl.appendChild(add);
     }
     return el;
   }
@@ -825,7 +849,7 @@
     bindUI();
     setupPanZoom();
     loadView();
-    loadCollapsed();
+    loadLineage();
     startListening();
   }
 
