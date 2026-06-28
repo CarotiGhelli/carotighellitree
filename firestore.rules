@@ -1,0 +1,12 @@
+// Incolla queste regole nel pannello "Firestore → Regole" della Firebase Console
+// (Passaggio B-5 delle istruzioni)
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Solo gli utenti autenticati con Google possono leggere e modificare l'albero
+    match /trees/{treeId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
