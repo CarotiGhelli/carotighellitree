@@ -1,6 +1,6 @@
-/* app.js — Albero Genealogico con Firebase Firestore + Google Auth
- * Dati dell'albero: Firestore (sync real-time su tutti i dispositivi)
- * Stato viewport (zoom/pan): localStorage (preferenza locale per dispositivo)
+/* app.js — Albero Genealogico
+ * Dati: Firestore (sync real-time) — nessun login richiesto
+ * Viewport (zoom/pan): localStorage per-dispositivo
  */
 (function () {
   "use strict";
@@ -11,12 +11,10 @@
   let seq = 1;
   const view = { scale: 1, x: 40, y: 40 };
   let editingId = null;
-  let currentUser = null;
   let unsubscribeSnapshot = null;
   let saveTimer = null;
   let tempPhoto = null;
 
-  // Costanti di layout
   const CARD_W = 160, CARD_H = 64;
   const H_GAP = 26, COUPLE_GAP = 26, V_GAP = 116, TREE_GAP = 80;
 
@@ -38,29 +36,21 @@
   function familiesAsSpouse(id) { return state.families.filter((f) => f.husb === id || f.wife === id); }
   function familyAsChild(id) { return state.families.find((f) => f.children.includes(id)); }
   function partnerOf(famId, pid) { const f = findFamily(famId); return f ? (f.husb === pid ? f.wife : f.husb) : null; }
-
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
-
-  function showToast(msg, ms = 3500) {
+  function showToast(msg, ms = 3000) {
     const el = $("#syncStatus");
-    el.textContent = msg;
-    el.hidden = false;
-    clearTimeout(el._t);
-    el._t = setTimeout(() => { el.hidden = true; }, ms);
+    el.textContent = msg; el.hidden = false;
+    clearTimeout(el._t); el._t = setTimeout(() => { el.hidden = true; }, ms);
   }
 
   // ============================================================ PERSISTENZA
-  function saveView() {
-    try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) {}
-  }
-  function loadView() {
-    try { const v = JSON.parse(localStorage.getItem(VIEW_KEY) || "null"); if (v) Object.assign(view, v); } catch (_) {}
-  }
+  function saveView() { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) {} }
+  function loadView() { try { const v = JSON.parse(localStorage.getItem(VIEW_KEY) || "null"); if (v) Object.assign(view, v); } catch (_) {} }
 
   function save() {
-    if (!currentUser || !window.db) return;
+    if (!window.db) return;
     clearTimeout(saveTimer);
     showToast("Salvando…", 60000);
     saveTimer = setTimeout(() => {
@@ -69,8 +59,6 @@
         families: state.families,
         seq,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        updatedBy: currentUser.displayName || currentUser.email || "Utente",
-        updatedByPhoto: currentUser.photoURL || "",
       })
         .then(() => showToast("Salvato ✓"))
         .catch((e) => { console.warn("Firestore save failed", e); showToast("Errore salvataggio"); });
@@ -82,24 +70,19 @@
     unsubscribeSnapshot = window.db.collection("trees").doc("main").onSnapshot(
       (snap) => {
         if (!snap.exists) {
-          // Prima volta: seed dati di esempio
           seedData(); save(); render(); fitToScreen();
           return;
         }
         const data = snap.data();
         if (!data) return;
-        state = { persons: data.persons || [], families: data.families || [] };
-        seq = data.seq || 1;
-        render();
-        const myName = currentUser ? (currentUser.displayName || currentUser.email || "") : "";
-        if (data.updatedBy && data.updatedBy !== myName) {
-          showToast(`Aggiornato da ${data.updatedBy}`);
+        // Aggiorna lo stato solo se non c'è un salvataggio pendente (evita flickering)
+        if (!saveTimer) {
+          state = { persons: data.persons || [], families: data.families || [] };
+          seq = data.seq || 1;
+          render();
         }
       },
-      (err) => {
-        console.warn("Firestore listener error", err);
-        showToast("Errore connessione al database");
-      }
+      (err) => { console.warn("Firestore listener error", err); showToast("Errore connessione"); }
     );
   }
 
@@ -126,28 +109,24 @@
 
   // ============================================================ LAYOUT
   function computeLayout() {
-    const pos = {};
-    const node = {};
+    const pos = {}, node = {};
     const visited = new Set();
 
     function measure(id) {
       if (node[id]) return node[id].width;
       if (visited.has(id)) return 0;
       visited.add(id);
-
       const fam = familiesAsSpouse(id)[0] || null;
       let spouseId = fam ? partnerOf(fam.id, id) : null;
       if (spouseId && visited.has(spouseId)) spouseId = null;
       if (spouseId) visited.add(spouseId);
-
       const ownChildren = fam ? fam.children.filter((c) => !visited.has(c)) : [];
       const childWidths = ownChildren.map(measure);
       let childrenTotal = childWidths.reduce((a, b) => a + b, 0);
       if (ownChildren.length > 1) childrenTotal += H_GAP * (ownChildren.length - 1);
-
       const coupleW = spouseId ? CARD_W * 2 + COUPLE_GAP : CARD_W;
       const width = Math.max(coupleW, childrenTotal, CARD_W);
-      node[id] = { id, fam, spouseId, ownChildren, childWidths, childrenTotal, coupleW, width };
+      node[id] = { fam, spouseId, ownChildren, childWidths, childrenTotal, coupleW, width };
       return width;
     }
 
@@ -184,7 +163,7 @@
       offsetX += node[f.id].width + TREE_GAP;
     }
 
-    // Antenati acquisiti (posizionati sopra i figli già piazzati)
+    // Antenati acquisiti posizionati sopra i discendenti già piazzati
     let guard = 0, changed = true;
     while (changed && guard++ < 200) {
       changed = false;
@@ -199,9 +178,7 @@
         const kidY = Math.min(...placedKids.map((c) => pos[c].y));
         const centerX = placedKids.reduce((a, c) => a + pos[c].x + CARD_W / 2, 0) / placedKids.length;
         const coupleW = parents.length > 1 ? CARD_W * 2 + COUPLE_GAP : CARD_W;
-        const left = centerX - coupleW / 2;
-        const y = kidY - V_GAP;
-        parents.forEach((pid, i) => { if (!pos[pid]) pos[pid] = { x: left + i * (CARD_W + COUPLE_GAP), y }; });
+        parents.forEach((pid, i) => { if (!pos[pid]) pos[pid] = { x: centerX - coupleW / 2 + i * (CARD_W + COUPLE_GAP), y: kidY - V_GAP }; });
         const unplaced = fam.children.filter((c) => !pos[c]);
         let kx = Math.max(...placedKids.map((c) => pos[c].x)) + CARD_W + H_GAP;
         for (const c of unplaced) { measure(c); place(c, kx, kidY); kx += (node[c] ? node[c].width : CARD_W) + H_GAP; }
@@ -215,9 +192,9 @@
 
     // De-sovrapposizione per riga
     const rows = {};
-    for (const id in pos) { const key = Math.round(pos[id].y); (rows[key] = rows[key] || []).push(id); }
-    for (const key in rows) {
-      const ids = rows[key].sort((a, b) => pos[a].x - pos[b].x);
+    for (const id in pos) { const k = Math.round(pos[id].y); (rows[k] = rows[k] || []).push(id); }
+    for (const k in rows) {
+      const ids = rows[k].sort((a, b) => pos[a].x - pos[b].x);
       let prevRight = -Infinity;
       for (const id of ids) { if (pos[id].x < prevRight + 14) pos[id].x = prevRight + 14; prevRight = pos[id].x + CARD_W; }
     }
@@ -265,14 +242,11 @@
     cardsEl.innerHTML = "";
     const layout = computeLayout();
     lastLayout = layout;
-
     $("#emptyHint").hidden = state.persons.length > 0;
-
     const pad = 60;
     linksEl.setAttribute("width", layout.width + pad);
     linksEl.setAttribute("height", layout.height + pad);
     linksEl.innerHTML = layout.linksSvg;
-
     for (const p of state.persons) {
       const pp = layout.pos[p.id];
       if (!pp) continue;
@@ -301,7 +275,6 @@
       ${living ? `<span class="living-dot" title="In vita"></span>` : ""}
       <span class="edit-pencil">✎</span>`;
     el.addEventListener("click", (e) => { e.stopPropagation(); openEditor(p.id); });
-
     const add = document.createElement("div");
     add.className = "add-btn"; add.textContent = "+"; add.title = "Aggiungi figlio/a";
     add.style.left = (pos.x + CARD_W / 2 - 11) + "px";
@@ -357,15 +330,14 @@
     if (!lastLayout) return;
     const vw = viewportEl.clientWidth, vh = viewportEl.clientHeight;
     const w = lastLayout.width || 1, h = lastLayout.height || 1;
-    view.scale = Math.min(Math.max(0.2, Math.min(vw / (w + 80), vh / (h + 80), 1.4)));
+    view.scale = Math.max(0.2, Math.min(vw / (w + 80), vh / (h + 80), 1.4));
     view.x = (vw - w * view.scale) / 2; view.y = 30;
     applyTransform(); saveView();
   }
 
   // ============================================================ EDITOR
   function openEditor(id) {
-    const p = findPerson(id);
-    if (!p) return;
+    const p = findPerson(id); if (!p) return;
     editingId = id; tempPhoto = p.photo || null;
     $("#editorTitle").textContent = fullName(p);
     $("#fFirst").value = p.first || ""; $("#fLast").value = p.last || "";
@@ -536,78 +508,12 @@
     fam("F4", "I7", "I8", ["I12", "I15"]);
     fam("F5", "I12", "I13", ["I16", "I17"]);
     fam("F6", "I14", "I15", ["I18", "I19"]);
-
     state = { persons: P, families: F }; seq = 20;
-  }
-
-  // ============================================================ AUTH
-  function initAuth() {
-    if (!window.auth) {
-      // Firebase non ancora configurato — modalità offline con localStorage
-      console.warn("Firebase non configurato. Funzionamento offline.");
-      runOffline(); return;
-    }
-
-    $("#btnGoogleLogin").addEventListener("click", () => {
-      window.auth.signInWithPopup(window.googleProvider).catch((err) => {
-        console.error("Login failed", err);
-        const errEl = $("#loginError");
-        if (err.code === "auth/popup-blocked") {
-          window.auth.signInWithRedirect(window.googleProvider);
-        } else {
-          errEl.textContent = "Accesso non riuscito: " + (err.message || err.code);
-          errEl.hidden = false;
-        }
-      });
-    });
-
-    $("#btnLogout").addEventListener("click", () => {
-      if (unsubscribeSnapshot) { unsubscribeSnapshot(); unsubscribeSnapshot = null; }
-      window.auth.signOut();
-    });
-
-    window.auth.getRedirectResult().catch((err) => console.warn("Redirect result error", err));
-
-    window.auth.onAuthStateChanged((user) => {
-      currentUser = user;
-      if (user) {
-        $("#loginScreen").hidden = true;
-        $("#appHeader").hidden = false;
-        $("#viewport").hidden = false;
-        const badge = $("#userBadge"); badge.hidden = false;
-        $("#userName").textContent = user.displayName || user.email || "Utente";
-        if (user.photoURL) { $("#userAvatar").src = user.photoURL; $("#userAvatar").hidden = false; }
-        else { $("#userAvatar").hidden = true; }
-        loadView(); startListening();
-      } else {
-        if (unsubscribeSnapshot) { unsubscribeSnapshot(); unsubscribeSnapshot = null; }
-        $("#loginScreen").hidden = false;
-        $("#appHeader").hidden = true;
-        $("#viewport").hidden = true;
-        $("#userBadge").hidden = true;
-      }
-    });
-  }
-
-  // Modalità offline (Firebase non configurato): usa localStorage
-  function runOffline() {
-    const LS_KEY = "albero-genealogico-v1";
-    save = function () {
-      try { localStorage.setItem(LS_KEY, JSON.stringify({ state, seq })); showToast("Salvato ✓"); } catch (_) {}
-    };
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) { try { const d = JSON.parse(raw); state = d.state; seq = d.seq || 1; } catch (_) { seedData(); } }
-    else { seedData(); save(); }
-    $("#loginScreen").hidden = true;
-    $("#appHeader").hidden = false;
-    $("#viewport").hidden = false;
-    loadView(); render(); fitToScreen();
   }
 
   // ============================================================ EVENTI UI
   function bindUI() {
     $("#btnAdd").addEventListener("click", () => { const p = createPerson({ first: "Nuova", last: "Persona" }); save(); render(); openEditor(p.id); });
-
     $("#editorClose").addEventListener("click", closeEditor);
     $("#overlay").addEventListener("click", closeEditor);
     $("#btnSave").addEventListener("click", () => saveCurrent(false));
@@ -615,11 +521,9 @@
       const p = findPerson(editingId);
       if (p && confirm(`Eliminare definitivamente "${fullName(p)}"?`)) { deletePerson(editingId); closeEditor(); }
     });
-
     $("#relAddPartner").addEventListener("click", () => { saveCurrent(true); addPartner(editingId); });
     $("#relAddChild").addEventListener("click", () => { saveCurrent(true); addChildTo(editingId); });
     $("#relAddParents").addEventListener("click", () => { saveCurrent(true); addParents(editingId); openEditor(editingId); });
-
     $("#photoInput").addEventListener("change", (e) => {
       const file = e.target.files[0]; if (!file) return;
       const reader = new FileReader();
@@ -627,7 +531,6 @@
       reader.readAsDataURL(file); e.target.value = "";
     });
     $("#photoRemove").addEventListener("click", () => { tempPhoto = null; updatePhotoPreview(); });
-
     $("#fileGedcom").addEventListener("change", (e) => {
       const file = e.target.files[0]; if (!file) return;
       const reader = new FileReader();
@@ -652,17 +555,14 @@
       };
       reader.readAsText(file); e.target.value = "";
     });
-
     $("#btnZoomIn").addEventListener("click", () => zoomAt(viewportEl.clientWidth / 2, viewportEl.clientHeight / 2, 1.15));
     $("#btnZoomOut").addEventListener("click", () => zoomAt(viewportEl.clientWidth / 2, viewportEl.clientHeight / 2, 1 / 1.15));
     $("#btnZoomReset").addEventListener("click", fitToScreen);
-
     $("#btnReset").addEventListener("click", () => {
       if (confirm("Cancellare tutto l'albero? Fai prima un Backup.")) {
         state = { persons: [], families: [] }; seq = 1; save(); render();
       }
     });
-
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && !$("#editor").hidden) closeEditor();
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !$("#editor").hidden) saveCurrent(false);
@@ -674,7 +574,8 @@
   function init() {
     bindUI();
     setupPanZoom();
-    initAuth();
+    loadView();
+    startListening();
   }
 
   document.addEventListener("DOMContentLoaded", init);
