@@ -3,3 +3,8 @@ Thumbs.db
 *.log
 node_modules/
 .env
+
+# Dati personali / backup dell'albero — non pubblicare nel repo
+RECUPERO-albero-struttura.json
+*-backup.json
+albero-genealogico.ged

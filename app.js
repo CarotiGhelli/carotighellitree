@@ -65,12 +65,18 @@
     }, 1200);
   }
 
+  let seededOnce = false;
   function startListening() {
     if (unsubscribeSnapshot) unsubscribeSnapshot();
     unsubscribeSnapshot = window.db.collection("trees").doc("main").onSnapshot(
       (snap) => {
+        // IMPORTANTISSIMO: non agire mai su dati provenienti dalla cache offline.
+        // Una lettura offline può sembrare "vuota" e causare una sovrascrittura.
+        if (snap.metadata && snap.metadata.fromCache) return;
+
         if (!snap.exists) {
-          seedData(); save(); render(); fitToScreen();
+          // Il documento è davvero assente sul server: crea i dati iniziali UNA sola volta.
+          if (!seededOnce) { seededOnce = true; seedData(); save(); render(); fitToScreen(); }
           return;
         }
         const data = snap.data();
@@ -107,96 +113,173 @@
     });
   }
 
-  // ============================================================ LAYOUT
+  // ============================================================ LAYOUT (a livelli, stile Sugiyama)
   function computeLayout() {
-    const pos = {}, node = {};
-    const visited = new Set();
+    const persons = state.persons, families = state.families;
+    if (!persons.length) return { pos: {}, linksSvg: "", width: 0, height: 0 };
 
-    function measure(id) {
-      if (node[id]) return node[id].width;
-      if (visited.has(id)) return 0;
-      visited.add(id);
-      const fam = familiesAsSpouse(id)[0] || null;
-      let spouseId = fam ? partnerOf(fam.id, id) : null;
-      if (spouseId && visited.has(spouseId)) spouseId = null;
-      if (spouseId) visited.add(spouseId);
-      const ownChildren = fam ? fam.children.filter((c) => !visited.has(c)) : [];
-      const childWidths = ownChildren.map(measure);
-      let childrenTotal = childWidths.reduce((a, b) => a + b, 0);
-      if (ownChildren.length > 1) childrenTotal += H_GAP * (ownChildren.length - 1);
-      const coupleW = spouseId ? CARD_W * 2 + COUPLE_GAP : CARD_W;
-      const width = Math.max(coupleW, childrenTotal, CARD_W);
-      node[id] = { fam, spouseId, ownChildren, childWidths, childrenTotal, coupleW, width };
-      return width;
-    }
+    const byId = {}; persons.forEach((p) => (byId[p.id] = p));
 
-    function place(id, left, top) {
-      const n = node[id];
-      if (!n || pos[id]) return;
-      const childTop = top + V_GAP;
-      let cx = left + (n.width - n.childrenTotal) / 2;
-      n.ownChildren.forEach((c, i) => { place(c, cx, childTop); cx += n.childWidths[i] + H_GAP; });
-      const coupleLeft = left + (n.width - n.coupleW) / 2;
-      pos[id] = { x: coupleLeft, y: top };
-      if (n.spouseId && !pos[n.spouseId]) pos[n.spouseId] = { x: coupleLeft + CARD_W + COUPLE_GAP, y: top };
-    }
-
-    function reachSize(id, seen) {
-      if (seen.has(id)) return 0; seen.add(id); let s = 1;
-      const fam = familiesAsSpouse(id)[0];
-      if (fam) for (const c of fam.children) s += reachSize(c, seen);
-      return s;
-    }
-
-    const isChild = new Set();
-    state.families.forEach((f) => f.children.forEach((c) => isChild.add(c)));
-    const founders = state.persons
-      .filter((p) => !isChild.has(p.id))
-      .sort((a, b) => reachSize(b.id, new Set()) - reachSize(a.id, new Set()));
-
-    let offsetX = 0;
-    for (const f of founders) {
-      if (pos[f.id] || visited.has(f.id)) continue;
-      const fam = familiesAsSpouse(f.id)[0];
-      if (fam && fam.children.some((c) => pos[c])) continue;
-      measure(f.id); place(f.id, offsetX, 0);
-      offsetX += node[f.id].width + TREE_GAP;
-    }
-
-    // Antenati acquisiti posizionati sopra i discendenti già piazzati
-    let guard = 0, changed = true;
-    while (changed && guard++ < 200) {
-      changed = false;
-      for (const p of state.persons) {
-        if (!pos[p.id]) continue;
-        const fam = familyAsChild(p.id);
-        if (!fam) continue;
-        const parents = [fam.husb, fam.wife].filter(Boolean);
-        if (!parents.length || parents.every((x) => pos[x])) continue;
-        const placedKids = fam.children.filter((c) => pos[c]);
-        if (!placedKids.length) continue;
-        const kidY = Math.min(...placedKids.map((c) => pos[c].y));
-        const centerX = placedKids.reduce((a, c) => a + pos[c].x + CARD_W / 2, 0) / placedKids.length;
-        const coupleW = parents.length > 1 ? CARD_W * 2 + COUPLE_GAP : CARD_W;
-        parents.forEach((pid, i) => { if (!pos[pid]) pos[pid] = { x: centerX - coupleW / 2 + i * (CARD_W + COUPLE_GAP), y: kidY - V_GAP }; });
-        const unplaced = fam.children.filter((c) => !pos[c]);
-        let kx = Math.max(...placedKids.map((c) => pos[c].x)) + CARD_W + H_GAP;
-        for (const c of unplaced) { measure(c); place(c, kx, kidY); kx += (node[c] ? node[c].width : CARD_W) + H_GAP; }
-        changed = true;
+    // --- Adiacenze precalcolate ---
+    const parentMap = {}, childMap = {}, spouseMap = {}, childFam = {};
+    persons.forEach((p) => { parentMap[p.id] = []; childMap[p.id] = []; spouseMap[p.id] = []; });
+    for (const f of families) {
+      const h = f.husb && byId[f.husb] ? f.husb : null;
+      const w = f.wife && byId[f.wife] ? f.wife : null;
+      if (h && w) { spouseMap[h].push(w); spouseMap[w].push(h); }
+      for (const c of f.children) {
+        if (!byId[c]) continue;
+        childFam[c] = f;
+        if (h) { parentMap[c].push(h); childMap[h].push(c); }
+        if (w) { parentMap[c].push(w); childMap[w].push(c); }
       }
     }
 
-    for (const p of state.persons) {
-      if (!pos[p.id]) { measure(p.id); place(p.id, offsetX, 0); offsetX += (node[p.id] ? node[p.id].width : CARD_W) + TREE_GAP; }
+    // --- 1) Generazioni (riga verticale) ---
+    const gen = {};
+    (function () {
+      function g(id, st) {
+        if (id in gen) return gen[id];
+        if (st.has(id)) return 0;
+        st.add(id);
+        let v = 0;
+        for (const p of parentMap[id]) v = Math.max(v, g(p, st) + 1);
+        st.delete(id); gen[id] = v; return v;
+      }
+      persons.forEach((p) => g(p.id, new Set()));
+      for (let it = 0; it < persons.length + 5; it++) {
+        let changed = false;
+        for (const f of families) {
+          if (f.husb && f.wife && byId[f.husb] && byId[f.wife]) {
+            const m = Math.max(gen[f.husb], gen[f.wife]);
+            if (gen[f.husb] !== m) { gen[f.husb] = m; changed = true; }
+            if (gen[f.wife] !== m) { gen[f.wife] = m; changed = true; }
+          }
+        }
+        for (const f of families) {
+          const ps = [f.husb, f.wife].filter((x) => x && byId[x]);
+          if (!ps.length) continue;
+          const pg = Math.max(...ps.map((x) => gen[x]));
+          for (const c of f.children) if (byId[c] && gen[c] <= pg) { gen[c] = pg + 1; changed = true; }
+        }
+        // "Pull-down": chi non ha vincoli sopra (o ha margine) viene avvicinato
+        // appena sopra i propri figli, per evitare connettori lunghissimi.
+        for (const p of persons) {
+          const kids = childMap[p.id];
+          if (!kids.length) continue;
+          const minChild = Math.min(...kids.map((c) => gen[c]));
+          const lower = parentMap[p.id].length ? Math.max(...parentMap[p.id].map((x) => gen[x])) + 1 : 0;
+          const target = minChild - 1;
+          if (target > gen[p.id] && target >= lower) { gen[p.id] = target; changed = true; }
+        }
+        if (!changed) break;
+      }
+    })();
+
+    const maxGen = Math.max(...persons.map((p) => gen[p.id]));
+
+    // --- 2) Ordine iniziale (DFS) + righe ---
+    const order = new Map(); let oc = 0; const vis = new Set();
+    function dfs(id) {
+      if (vis.has(id)) return;
+      vis.add(id); order.set(id, oc++);
+      for (const s of spouseMap[id]) if (!vis.has(s)) { vis.add(s); order.set(s, oc++); }
+      for (const c of childMap[id]) dfs(c);
+    }
+    persons.filter((p) => parentMap[p.id].length === 0).sort((a, b) => gen[a.id] - gen[b.id]).forEach((f) => dfs(f.id));
+    persons.forEach((p) => { if (!vis.has(p.id)) dfs(p.id); });
+
+    const rows = [];
+    for (let i = 0; i <= maxGen; i++) rows[i] = [];
+    persons.forEach((p) => rows[gen[p.id]].push(p.id));
+    rows.forEach((r) => r.sort((a, b) => order.get(a) - order.get(b)));
+
+    // --- Unità per riga (coppia = unità atomica) ---
+    const unitOf = {};
+    const rowUnits = [];
+    for (let g = 0; g <= maxGen; g++) {
+      const used = new Set(), units = [];
+      for (const id of rows[g]) {
+        if (used.has(id)) continue;
+        const sp = spouseMap[id].find((s) => gen[s] === g && !used.has(s));
+        let members;
+        if (sp) {
+          members = (byId[id].sex === "F" && byId[sp].sex !== "F") ? [sp, id] : [id, sp];
+          used.add(id); used.add(sp);
+        } else { members = [id]; used.add(id); }
+        // Membro "primario" = linea di sangue dominante (chi ha più fratelli
+        // nell'albero). Ancorando l'unità ai SUOI genitori, i fratelli restano
+        // vicini invece di essere trascinati via dalla famiglia del coniuge.
+        const birthSize = (idm) => (childFam[idm] ? childFam[idm].children.filter((c) => byId[c]).length : 0);
+        let primary = members[0];
+        if (members.length === 2 && birthSize(members[1]) > birthSize(members[0])) primary = members[1];
+        const u = { members, g, primary };
+        units.push(u); members.forEach((m) => (unitOf[m] = u));
+      }
+      rowUnits[g] = units;
     }
 
-    // De-sovrapposizione per riga
-    const rows = {};
-    for (const id in pos) { const k = Math.round(pos[id].y); (rows[k] = rows[k] || []).push(id); }
-    for (const k in rows) {
-      const ids = rows[k].sort((a, b) => pos[a].x - pos[b].x);
-      let prevRight = -Infinity;
-      for (const id of ids) { if (pos[id].x < prevRight + 14) pos[id].x = prevRight + 14; prevRight = pos[id].x + CARD_W; }
+    // --- 3) Riduzione incroci (baricentro su unità) ---
+    const reindex = (g) => rowUnits[g].forEach((u, i) => (u._i = i));
+    for (let g = 0; g <= maxGen; g++) reindex(g);
+    // connUp usa solo il membro primario: tiene insieme i fratelli.
+    const connUp = (u) => { const a = []; for (const p of parentMap[u.primary]) { const pu = unitOf[p]; if (pu && pu.g === u.g - 1) a.push(pu._i); } return a; };
+    const connDown = (u) => { const a = []; for (const m of u.members) for (const c of childMap[m]) { const cu = unitOf[c]; if (cu && cu.g === u.g + 1) a.push(cu._i); } return a; };
+    const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+    for (let iter = 0; iter < 12; iter++) {
+      for (let g = 1; g <= maxGen; g++) {
+        for (const u of rowUnits[g]) { const c = connUp(u); u._k = c.length ? avg(c) : u._i; }
+        rowUnits[g].sort((a, b) => a._k - b._k); reindex(g);
+      }
+      for (let g = maxGen - 1; g >= 0; g--) {
+        for (const u of rowUnits[g]) { const c = connDown(u); u._k = c.length ? avg(c) : u._i; }
+        rowUnits[g].sort((a, b) => a._k - b._k); reindex(g);
+      }
+    }
+
+    // --- 4) Coordinate X ---
+    const unitWidth = (u) => (u.members.length === 2 ? CARD_W * 2 + COUPLE_GAP : CARD_W);
+    const unitCenter = (u) => u._x + unitWidth(u) / 2;
+    for (let g = 0; g <= maxGen; g++) { let x = 0; for (const u of rowUnits[g]) { u._x = x; x += unitWidth(u) + H_GAP; } }
+
+    const centersUp = (u) => { const a = []; for (const p of parentMap[u.primary]) { const pu = unitOf[p]; if (pu && pu.g === u.g - 1) a.push(unitCenter(pu)); } return a.length ? avg(a) : null; };
+    const centersDown = (u) => { const a = []; for (const m of u.members) for (const c of childMap[m]) { const cu = unitOf[c]; if (cu && cu.g === u.g + 1) a.push(unitCenter(cu)); } return a.length ? avg(a) : null; };
+
+    // Posiziona la riga il più vicino possibile alle posizioni desiderate (in u._x)
+    // mantenendo l'ordine e le distanze minime. Usa l'algoritmo PAVA (regressione
+    // isotonica): è ottimo, O(n) e — soprattutto — non diverge mai.
+    function resolveRow(g) {
+      const us = rowUnits[g];
+      const n = us.length;
+      if (!n) return;
+      const w = us.map(unitWidth);
+      const S = new Array(n); S[0] = 0;
+      for (let i = 1; i < n; i++) S[i] = S[i - 1] + (w[i - 1] / 2 + H_GAP + w[i] / 2);
+      // target del centro trasformato per renderlo un problema "non decrescente"
+      const t = us.map((u, i) => (u._x + w[i] / 2) - S[i]);
+      const blocks = []; // {v: valore, c: quanti punti}
+      for (let i = 0; i < n; i++) {
+        let nb = { v: t[i], c: 1 };
+        while (blocks.length && blocks[blocks.length - 1].v >= nb.v) {
+          const pb = blocks.pop();
+          nb = { v: (pb.v * pb.c + nb.v * nb.c) / (pb.c + nb.c), c: pb.c + nb.c };
+        }
+        blocks.push(nb);
+      }
+      let i = 0;
+      for (const b of blocks) for (let j = 0; j < b.c; j++) { const center = b.v + S[i]; us[i]._x = center - w[i] / 2; i++; }
+    }
+
+    for (let iter = 0; iter < 16; iter++) {
+      for (let g = maxGen - 1; g >= 0; g--) { for (const u of rowUnits[g]) { const t = centersDown(u); if (t != null) u._x = t - unitWidth(u) / 2; } resolveRow(g); }
+      for (let g = 1; g <= maxGen; g++) { for (const u of rowUnits[g]) { const t = centersUp(u); if (t != null) u._x = t - unitWidth(u) / 2; } resolveRow(g); }
+    }
+
+    // --- Posizioni finali ---
+    const pos = {};
+    for (let g = 0; g <= maxGen; g++) {
+      const y = g * V_GAP;
+      for (const u of rowUnits[g]) { let x = u._x; for (const m of u.members) { pos[m] = { x, y }; x += CARD_W + COUPLE_GAP; } }
     }
 
     // Normalizza origine
@@ -206,12 +289,12 @@
     for (const id in pos) { pos[id].x -= minX; pos[id].y -= minY; }
     for (const id in pos) { maxX = Math.max(maxX, pos[id].x + CARD_W); maxY = Math.max(maxY, pos[id].y + CARD_H); }
 
-    // Connettori SVG
+    // --- Connettori SVG ---
     const segs = [];
-    for (const fam of state.families) {
+    for (const fam of families) {
       const parents = [fam.husb, fam.wife].filter((x) => x && pos[x]);
       const kids = fam.children.filter((c) => pos[c]);
-      if (!parents.length) continue;
+      if (!parents.length || !kids.length && parents.length < 2) continue;
       let midX, bottomY;
       if (parents.length === 2 && Math.abs(pos[parents[0]].y - pos[parents[1]].y) < 4) {
         const a = pos[parents[0]], b = pos[parents[1]];
