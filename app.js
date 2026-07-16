@@ -249,12 +249,107 @@
     saveLineage(); render();
   }
 
+  // ============================================================ VISTA NAVIGABILE (stile MyHeritage)
+  // Preferenza LOCALE per dispositivo. mode:
+  //   'all'         -> tutto l'albero (comportamento storico, fallback)
+  //   'family'      -> focus + N generazioni su/giù (default navigabile)
+  //   'ancestors'   -> solo ascendenti del focus
+  //   'descendants' -> solo discendenti del focus
+  const VIEWSTATE_KEY = "albero-viewstate-v2";
+  const viewState = { mode: "family", focusId: null, upGens: 2, downGens: 2, expUp: {}, expDown: {}, colUp: {}, colDown: {} };
+  function saveViewState() { try { localStorage.setItem(VIEWSTATE_KEY, JSON.stringify(viewState)); } catch (_) {} }
+  function loadViewState() {
+    try { const d = JSON.parse(localStorage.getItem(VIEWSTATE_KEY) || "null"); if (d) Object.assign(viewState, d); } catch (_) {}
+    for (const k of ["expUp", "expDown", "colUp", "colDown"]) if (!viewState[k]) viewState[k] = {};
+  }
+
+  // Insieme delle persone da mostrare + info sui rami nascosti (per le frecce +/–)
+  function computeView() {
+    const g = buildGraph();
+    if (viewState.mode !== "all" && !viewState.focusId && state.persons.length) viewState.focusId = pickDefaultFocus();
+    if (viewState.mode === "all" || !viewState.focusId || !g.byId[viewState.focusId]) return { visible: null, branch: {}, g };
+    const vis = new Set([viewState.focusId]);
+    const up = viewState.mode === "descendants" ? 0 : viewState.mode === "ancestors" ? 99 : viewState.upGens;
+    const down = viewState.mode === "ancestors" ? 0 : viewState.mode === "descendants" ? 99 : viewState.downGens;
+    const climb = (id, b) => { if (viewState.colUp[id]) return; if (!(b > 0 || viewState.expUp[id])) return; for (const p of g.parent[id]) { vis.add(p); climb(p, b - 1); } };
+    const descend = (id, b) => { if (viewState.colDown[id]) return; if (!(b > 0 || viewState.expDown[id])) return; for (const c of g.child[id]) { vis.add(c); descend(c, b - 1); } };
+    climb(viewState.focusId, up); descend(viewState.focusId, down);
+    // coniugi + espansioni per-nodo, fino a stabilità
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const id of [...vis]) {
+        for (const s of g.spouse[id]) if (g.byId[s] && !vis.has(s)) { vis.add(s); changed = true; }
+        if (viewState.expUp[id]) for (const p of g.parent[id]) if (!vis.has(p)) { vis.add(p); changed = true; }
+        if (viewState.expDown[id]) for (const c of g.child[id]) if (!vis.has(c)) { vis.add(c); changed = true; }
+      }
+    }
+    const countHidden = (id, nb) => {
+      const seen = new Set(); const st = [...nb[id]]; let n = 0;
+      while (st.length) { const x = st.pop(); if (seen.has(x)) continue; seen.add(x); if (!vis.has(x)) n++; for (const y of nb[x]) st.push(y); }
+      return n;
+    };
+    const branch = {};
+    for (const id of vis) {
+      branch[id] = {
+        hasUp: g.parent[id].length > 0, hasDown: g.child[id].length > 0,
+        upShown: g.parent[id].some((p) => vis.has(p)), downShown: g.child[id].some((c) => vis.has(c)),
+        hiddenUp: countHidden(id, g.parent), hiddenDown: countHidden(id, g.child),
+      };
+    }
+    return { visible: vis, branch, g };
+  }
+
+  function setFocus(id) {
+    if (!findPerson(id)) return;
+    viewState.focusId = id;
+    if (viewState.mode === "all") viewState.mode = "family";
+    // ogni cambio focus riparte con la finestra pulita
+    viewState.expUp = {}; viewState.expDown = {}; viewState.colUp = {}; viewState.colDown = {};
+    saveViewState();
+    render(true);
+    setTimeout(() => centerOnPerson(id, true), 30);
+    updateViewChrome();
+  }
+  function setViewMode(mode) {
+    viewState.mode = mode;
+    if (mode !== "all" && !viewState.focusId) viewState.focusId = pickDefaultFocus();
+    viewState.expUp = {}; viewState.expDown = {}; viewState.colUp = {}; viewState.colDown = {};
+    saveViewState();
+    render(true);
+    if (mode === "all") setTimeout(() => fitToScreen(true), 30);
+    else if (viewState.focusId) setTimeout(() => centerOnPerson(viewState.focusId, true), 30);
+    updateViewChrome();
+  }
+  function toggleBranch(id, dir) {
+    // La freccia compare solo sulla frontiera (espandi) o su ciò che è stato espanso
+    // (comprimi): un semplice toggle dell'espansione copre entrambi i casi.
+    const exp = dir === "up" ? viewState.expUp : viewState.expDown;
+    if (exp[id]) delete exp[id]; else exp[id] = true;
+    saveViewState(); render(true);
+  }
+  // Persona di default: chi ha SIA genitori SIA figli nell'albero (una generazione
+  // "cerniera" con una bella famiglia attorno), preferendo la più recente.
+  function pickDefaultFocus() {
+    if (!state.persons.length) return null;
+    const g = buildGraph();
+    let best = state.persons[0].id, bestScore = -Infinity;
+    for (const p of state.persons) {
+      const score = (g.parent[p.id].length ? 1000 : 0) + (g.child[p.id].length ? 1000 : 0) + (yearOf(p.birth) || 0);
+      if (score > bestScore) { bestScore = score; best = p.id; }
+    }
+    return best;
+  }
+
   // ============================================================ LAYOUT (a livelli, stile Sugiyama)
   function computeLayout() {
-    const hidden = computeHidden();
-    const persons = state.persons.filter((p) => !hidden.has(p.id));
+    // In modalità focus la vista decide la visibilità; la linea M/F vale solo in 'all'.
+    const inView = currentView.visible; // Set oppure null (=tutti)
+    const hidden = inView ? new Set() : computeHidden();
+    const show = (id) => (!hidden.has(id)) && (!inView || inView.has(id));
+    const persons = state.persons.filter((p) => show(p.id));
     const families = state.families
-      .map((f) => ({ id: f.id, husb: f.husb && !hidden.has(f.husb) ? f.husb : null, wife: f.wife && !hidden.has(f.wife) ? f.wife : null, children: f.children.filter((c) => !hidden.has(c)) }))
+      .map((f) => ({ id: f.id, husb: f.husb && show(f.husb) ? f.husb : null, wife: f.wife && show(f.wife) ? f.wife : null, children: f.children.filter((c) => show(c)) }))
       .filter((f) => f.husb || f.wife || f.children.length);
     if (!persons.length) return { pos: {}, segs: [], linksSvg: "", width: 0, height: 0 };
 
@@ -564,6 +659,7 @@
   // ============================================================ RENDER
   let lastLayout = null;
   let currentClash = {}; // id -> { famId, chosen:bool }  (coppie in conflitto, per render)
+  let currentView = { visible: null, branch: {}, g: null }; // stato vista per il render corrente
 
   // Precalcola, una volta per render, chi è in una coppia "in conflitto" e quale lato è scelto
   function computeClashMap() {
@@ -579,10 +675,15 @@
     return map;
   }
 
-  function render() {
+  function render(animate) {
     if (pathMode) exitPathMode();
+    // Posizioni precedenti (per l'animazione FLIP)
+    const oldPos = {};
+    if (animate) cardsEl.querySelectorAll(".card").forEach((el) => { oldPos[el.dataset.id] = { x: parseFloat(el.style.left), y: parseFloat(el.style.top) }; });
+
     cardsEl.innerHTML = "";
     currentClash = computeClashMap();
+    currentView = computeView();
     const layout = computeLayout();
     lastLayout = layout;
     $("#emptyHint").hidden = state.persons.length > 0;
@@ -598,11 +699,41 @@
     worldEl.style.width = (layout.width + pad) + "px";
     worldEl.style.height = (layout.height + pad) + "px";
     applyTransform();
+    drawMinimap();
+    updateViewChrome();
+
+    if (animate) {
+      linksEl.style.opacity = "0";
+      requestAnimationFrame(() => {
+        cardsEl.querySelectorAll(".card").forEach((el) => {
+          const o = oldPos[el.dataset.id];
+          if (o) {
+            const nx = parseFloat(el.style.left), ny = parseFloat(el.style.top);
+            el.style.transition = "none";
+            el.style.transform = `translate(${o.x - nx}px, ${o.y - ny}px)`;
+            requestAnimationFrame(() => {
+              el.style.transition = "transform .45s cubic-bezier(.4,.1,.2,1)";
+              el.style.transform = "";
+              el.addEventListener("transitionend", () => { el.style.transition = ""; el.style.transform = ""; }, { once: true });
+            });
+          } else {
+            el.classList.add("card-enter");
+            requestAnimationFrame(() => el.classList.remove("card-enter"));
+          }
+        });
+        setTimeout(() => { linksEl.style.opacity = "1"; }, 200);
+      });
+    } else {
+      linksEl.style.opacity = "1";
+    }
   }
 
   function buildCard(p, pos) {
+    const focusMode = viewState.mode !== "all";
+    const info = currentView.branch[p.id] || null;
     const el = document.createElement("div");
     el.className = "card " + (p.sex === "M" ? "male" : p.sex === "F" ? "female" : "unknown");
+    if (focusMode && p.id === viewState.focusId) el.classList.add("is-focus");
     el.style.left = pos.x + "px"; el.style.top = pos.y + "px";
     el.dataset.id = p.id;
     const dates = formatDates(p);
@@ -616,19 +747,28 @@
         ${dates ? `<div class="dates">${escapeHtml(dates)}</div>` : ""}
       </div>
       ${living ? `<span class="living-dot" title="In vita"></span>` : ""}
-      <span class="edit-pencil">✎</span>`;
-    // Clic: in modalità selezione = spunta; in modalità percorso = scelta; altrimenti scheda.
-    // Doppio clic = famiglia stretta.
+      <span class="edit-pencil" title="Apri scheda">✎</span>`;
+
+    el.querySelector(".edit-pencil").addEventListener("click", (e) => { e.stopPropagation(); openEditor(p.id); });
+
+    // Clic: selezione/percorso hanno priorità. In modalità focus il clic ri-centra;
+    // in 'all' apre la scheda. Doppio clic = famiglia stretta.
     el.addEventListener("click", (e) => {
       e.stopPropagation();
       if (selectMode) { toggleSelect(p.id); return; }
       if (pathMode) { selectForPath(p.id); return; }
       clearTimeout(el._ct);
-      el._ct = setTimeout(() => openEditor(p.id), 240);
+      el._ct = setTimeout(() => { if (focusMode) setFocus(p.id); else openEditor(p.id); }, 220);
     });
     el.addEventListener("dblclick", (e) => { e.stopPropagation(); clearTimeout(el._ct); if (selectMode || pathMode) return; openFocus(p.id); });
 
-    // Riapplica lo stato di selezione se la carta viene ricreata durante la modalità
+    // Evidenzia la linea diretta focus <-> questa persona al passaggio del mouse
+    if (focusMode && !selectMode && !pathMode) {
+      el.addEventListener("mouseenter", () => highlightLineage(p.id));
+      el.addEventListener("mouseleave", clearLineageHighlight);
+    }
+
+    // Selezione multipla
     if (selectMode) {
       el.classList.add("selectable");
       if (selected.has(p.id)) {
@@ -637,30 +777,80 @@
       }
     }
 
-    // Aggiungi figlio/a (in basso)
-    const add = document.createElement("div");
-    add.className = "add-btn"; add.textContent = "+"; add.title = "Aggiungi figlio/a";
-    add.style.left = (pos.x + CARD_W / 2 - 11) + "px";
-    add.style.top = (pos.y + CARD_H - 4) + "px";
-    add.addEventListener("click", (e) => { e.stopPropagation(); addChildTo(p.id); });
-    cardsEl.appendChild(add);
+    // Barra azioni rapide (compare al passaggio del mouse)
+    if (!selectMode && !pathMode) {
+      const qa = document.createElement("div");
+      qa.className = "quick-actions";
+      const mkBtn = (label, title, fn) => { const b = document.createElement("button"); b.textContent = label; b.title = title; b.addEventListener("click", (e) => { e.stopPropagation(); fn(); }); qa.appendChild(b); };
+      mkBtn("✎", "Apri scheda", () => openEditor(p.id));
+      mkBtn("＋", "Aggiungi figlio/a", () => addChildTo(p.id));
+      mkBtn("🎯", "Centra qui", () => setFocus(p.id));
+      mkBtn("👪", "Famiglia stretta", () => openFocus(p.id));
+      el.appendChild(qa);
+    }
 
-    // Pulsante SOPRA: scelta della linea genealogica (solo se la coppia ha entrambe
-    // le ascendenze). Se la mia linea è mostrata = "–"; se nascosta = "+".
-    const ci = currentClash[p.id];
-    if (ci) {
-      const tog = document.createElement("div");
-      tog.className = "collapse-btn" + (ci.chosen ? "" : " collapsed");
-      tog.textContent = ci.chosen ? "–" : "+";
-      tog.title = ci.chosen
-        ? `Nascondi la linea di ${fullName(p)} e mostra quella del coniuge`
-        : `Mostra la linea di ${fullName(p)} (nasconde quella del coniuge)`;
-      tog.style.left = (pos.x + CARD_W / 2 - 11) + "px";
-      tog.style.top = (pos.y - 14) + "px";
-      tog.addEventListener("click", (e) => { e.stopPropagation(); toggleLineage(p.id); });
-      cardsEl.appendChild(tog);
+    if (focusMode && info) {
+      // Frecce sulla FRONTIERA: espandi dove ci sono parenti nascosti; comprimi solo
+      // ciò che è stato espanso (come MyHeritage), niente "–" inutili sui nodi interni.
+      const upExpand = !info.upShown && info.hasUp;
+      const upCollapse = info.upShown && viewState.expUp[p.id];
+      if (upExpand || upCollapse) el.appendChild(makeBranchArrow(p.id, "up", info, upExpand));
+      const downExpand = !info.downShown && info.hasDown;
+      const downCollapse = info.downShown && viewState.expDown[p.id];
+      if (downExpand || downCollapse) el.appendChild(makeBranchArrow(p.id, "down", info, downExpand));
+    } else if (!focusMode) {
+      // 'all': comportamento storico — aggiungi figlio (sotto) + scelta linea M/F (sopra)
+      const add = document.createElement("div");
+      add.className = "add-btn card-child add-bottom"; add.textContent = "+"; add.title = "Aggiungi figlio/a";
+      add.addEventListener("click", (e) => { e.stopPropagation(); addChildTo(p.id); });
+      el.appendChild(add);
+      const ci = currentClash[p.id];
+      if (ci) {
+        const tog = document.createElement("div");
+        tog.className = "collapse-btn card-child line-top" + (ci.chosen ? "" : " collapsed");
+        tog.textContent = ci.chosen ? "–" : "+";
+        tog.title = ci.chosen ? `Nascondi la linea di ${fullName(p)}` : `Mostra la linea di ${fullName(p)} (nasconde quella del coniuge)`;
+        tog.addEventListener("click", (e) => { e.stopPropagation(); toggleLineage(p.id); });
+        el.appendChild(tog);
+      }
     }
     return el;
+  }
+
+  function makeBranchArrow(id, dir, info, expand) {
+    const hidden = dir === "up" ? info.hiddenUp : info.hiddenDown;
+    const b = document.createElement("div");
+    b.className = `branch-arrow card-child ${dir}` + (expand ? "" : " open");
+    b.textContent = expand ? (hidden > 0 ? "+" + hidden : "+") : "–";
+    b.title = expand
+      ? (dir === "up" ? `Mostra ascendenti${hidden ? " (" + hidden + ")" : ""}` : `Mostra discendenti${hidden ? " (" + hidden + ")" : ""}`)
+      : (dir === "up" ? "Nascondi ascendenti" : "Nascondi discendenti");
+    b.addEventListener("click", (e) => { e.stopPropagation(); toggleBranch(id, dir); });
+    return b;
+  }
+
+  // Evidenziazione della linea diretta tra il focus e una persona (solo carte visibili)
+  function highlightLineage(id) {
+    if (!currentView.g || !viewState.focusId || id === viewState.focusId) return;
+    const path = shortestVisiblePath(viewState.focusId, id);
+    if (!path) return;
+    const set = new Set(path);
+    cardsEl.querySelectorAll(".card").forEach((el) => el.classList.toggle("lineage-hi", set.has(el.dataset.id)));
+  }
+  function clearLineageHighlight() { cardsEl.querySelectorAll(".card.lineage-hi").forEach((el) => el.classList.remove("lineage-hi")); }
+  function shortestVisiblePath(a, b) {
+    const g = currentView.g || buildGraph();
+    const vis = currentView.visible;
+    const ok = (x) => !vis || vis.has(x);
+    const prev = { [a]: null }; const q = [a];
+    while (q.length) {
+      const n = q.shift();
+      if (n === b) break;
+      for (const m of [...g.parent[n], ...g.child[n], ...g.spouse[n]]) if (ok(m) && !(m in prev)) { prev[m] = n; q.push(m); }
+    }
+    if (!(b in prev)) return null;
+    const path = []; let c = b; while (c != null) { path.push(c); c = prev[c]; }
+    return path;
   }
 
   function formatDates(p) {
@@ -746,13 +936,53 @@
     applyTransform(); saveView();
   }
 
-  function fitToScreen() {
+  function fitToScreen(animate) {
     if (!lastLayout) return;
     const vw = viewportEl.clientWidth, vh = viewportEl.clientHeight;
     const w = lastLayout.width || 1, h = lastLayout.height || 1;
     view.scale = Math.max(0.2, Math.min(vw / (w + 80), vh / (h + 80), 1.4));
     view.x = (vw - w * view.scale) / 2; view.y = 30;
-    applyTransform(); saveView();
+    if (animate) animateWorld();
+    applyTransform(); saveView(); drawMinimap();
+  }
+
+  // ============================================================ MINIMAPPA
+  function drawMinimap() {
+    const cv = document.getElementById("minimapCanvas");
+    if (!cv || !lastLayout || !lastLayout.width) return;
+    const W = cv.width, H = cv.height, ctx = cv.getContext("2d");
+    ctx.clearRect(0, 0, W, H);
+    const lw = lastLayout.width || 1, lh = lastLayout.height || 1;
+    const s = Math.min((W - 6) / lw, (H - 6) / lh);
+    const ox = (W - lw * s) / 2, oy = (H - lh * s) / 2;
+    ctx.fillStyle = "#c3ccd4";
+    for (const id in lastLayout.pos) { const p = lastLayout.pos[id]; ctx.fillRect(ox + p.x * s, oy + p.y * s, Math.max(1.5, CARD_W * s), Math.max(1.5, CARD_H * s)); }
+    const vw = viewportEl.clientWidth, vh = viewportEl.clientHeight;
+    const rx = -view.x / view.scale, ry = -view.y / view.scale;
+    ctx.strokeStyle = "#3a7afe"; ctx.lineWidth = 1.5;
+    ctx.strokeRect(ox + rx * s, oy + ry * s, (vw / view.scale) * s, (vh / view.scale) * s);
+    cv._map = { s, ox, oy };
+  }
+  function minimapPan(ev) {
+    const cv = document.getElementById("minimapCanvas");
+    if (!cv || !cv._map) return;
+    const r = cv.getBoundingClientRect();
+    const { s, ox, oy } = cv._map;
+    const wx = ((ev.clientX - r.left) - ox) / s, wy = ((ev.clientY - r.top) - oy) / s;
+    view.x = viewportEl.clientWidth / 2 - wx * view.scale;
+    view.y = viewportEl.clientHeight / 2 - wy * view.scale;
+    animateWorld(); applyTransform(); saveView(); drawMinimap();
+  }
+
+  function updateViewChrome() {
+    document.querySelectorAll("#viewModes .vm").forEach((b) => b.classList.toggle("active", b.dataset.mode === viewState.mode));
+    const lbl = document.getElementById("focusLabel");
+    if (lbl) {
+      const p = viewState.focusId && findPerson(viewState.focusId);
+      const show = viewState.mode !== "all" && p;
+      lbl.hidden = !show;
+      lbl.textContent = show ? "◎ " + fullName(p) : "";
+    }
   }
 
   // ============================================================ EDITOR
@@ -981,6 +1211,7 @@
       e.preventDefault();
       const id = row.dataset.id;
       box.value = ""; hide(); box.blur();
+      if (viewState.mode !== "all") { setFocus(id); return; } // in modalità focus, ri-centra su di lei
       if (lastLayout && lastLayout.pos[id]) centerOnPerson(id);
       else openFocus(id); // nascosta dalla linea genealogica: mostra la famiglia stretta
     });
@@ -988,16 +1219,25 @@
     box.addEventListener("keydown", (e) => { if (e.key === "Escape") { box.value = ""; hide(); box.blur(); } });
   }
 
-  function centerOnPerson(id) {
+  function animateWorld() {
+    worldEl.classList.add("animating");
+    clearTimeout(worldEl._at);
+    worldEl._at = setTimeout(() => worldEl.classList.remove("animating"), 480);
+  }
+
+  function centerOnPerson(id, animate) {
     const pp = lastLayout && lastLayout.pos[id];
     if (!pp) { openFocus(id); return; }
     const vw = viewportEl.clientWidth, vh = viewportEl.clientHeight;
     if (view.scale < 0.7) view.scale = 0.9;
     view.x = vw / 2 - (pp.x + CARD_W / 2) * view.scale;
     view.y = vh / 2.6 - pp.y * view.scale;
+    if (animate) animateWorld();
     applyTransform(); saveView();
-    const el = cardsEl.querySelector(`.card[data-id="${id}"]`);
-    if (el) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2800); }
+    if (!animate) {
+      const el = cardsEl.querySelector(`.card[data-id="${id}"]`);
+      if (el) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2800); }
+    }
   }
 
   // ============================================================ FAMIGLIA STRETTA
@@ -1434,6 +1674,17 @@
     $("#btnSelectCancel").addEventListener("click", exitSelectMode);
     $("#btnSelectDelete").addEventListener("click", deleteSelected);
     $("#btnSelectAllVisible").addEventListener("click", selectAllVisible);
+
+    // Modalità di visualizzazione + minimappa
+    document.querySelectorAll("#viewModes .vm").forEach((b) => b.addEventListener("click", () => setViewMode(b.dataset.mode)));
+    $("#focusLabel").addEventListener("click", () => { if (viewState.focusId) centerOnPerson(viewState.focusId, true); });
+    const mm = $("#minimapCanvas");
+    if (mm) {
+      let mmDrag = false;
+      mm.addEventListener("mousedown", (e) => { mmDrag = true; minimapPan(e); });
+      window.addEventListener("mousemove", (e) => { if (mmDrag) minimapPan(e); });
+      window.addEventListener("mouseup", () => { mmDrag = false; });
+    }
     $("#modalClose").addEventListener("click", closeModal);
     $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
     bindSearch();
@@ -1457,6 +1708,7 @@
     setupPanZoom();
     loadView();
     loadLineage();
+    loadViewState();
     fixViewportTop();
     startListening();
     window.__exportPNG = exportPNG; // usato solo per le verifiche automatiche

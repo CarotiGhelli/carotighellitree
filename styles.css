@@ -73,7 +73,8 @@ html, body {
 }
 .viewport.panning { cursor: grabbing; }
 .world { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
-.links { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+.world.animating { transition: transform .45s cubic-bezier(.4,.1,.2,1); }
+.links { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; transition: opacity .25s ease; }
 .cards { position: absolute; top: 0; left: 0; }
 
 /* ---------- Card ---------- */
@@ -118,6 +119,69 @@ html, body {
   cursor: pointer; box-shadow: var(--shadow); z-index: 5;
 }
 .add-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ---------- Vista navigabile (MyHeritage-like) ---------- */
+.view-modes { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.view-modes .vm {
+  border: none; background: #fff; color: var(--ink);
+  padding: 7px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  border-right: 1px solid var(--line);
+}
+.view-modes .vm:last-child { border-right: none; }
+.view-modes .vm:hover { background: #f1f5f9; }
+.view-modes .vm.active { background: var(--accent); color: #fff; }
+.focus-label {
+  font-size: 12.5px; font-weight: 700; color: var(--accent);
+  background: #eef4ff; border: 1px solid #d5e4ff; border-radius: 8px;
+  padding: 6px 10px; cursor: pointer; max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Carte figlie posizionate rispetto alla carta */
+.card-child { position: absolute; }
+.add-bottom { left: 50%; bottom: -11px; transform: translateX(-50%); }
+.line-top { left: 50%; top: -11px; transform: translateX(-50%); }
+
+/* Frecce espandi/comprimi rami */
+.branch-arrow {
+  min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px;
+  background: #fff; border: 1px solid var(--line); color: var(--accent);
+  font-size: 12px; font-weight: 800; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: var(--shadow); z-index: 6; white-space: nowrap;
+}
+.branch-arrow:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.branch-arrow.open { color: var(--muted); }
+.branch-arrow.up { left: 50%; top: -13px; transform: translateX(-50%); }
+.branch-arrow.down { left: 50%; bottom: -13px; transform: translateX(-50%); }
+
+/* Carta focus + evidenziazione linea diretta */
+.card.is-focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(58,122,254,.35), var(--shadow-lg); }
+.card.lineage-hi { box-shadow: 0 0 0 3px rgba(255,152,0,.6); z-index: 4; }
+.card-enter { opacity: 0; transform: scale(.9); }
+
+/* Barra azioni rapide (hover) */
+.quick-actions {
+  position: absolute; left: calc(100% + 5px); top: 0;
+  display: flex; flex-direction: column; gap: 4px;
+  opacity: 0; pointer-events: none; transition: opacity .12s; z-index: 8;
+}
+.card:hover .quick-actions { opacity: 1; pointer-events: auto; }
+.quick-actions button {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--line); background: #fff; cursor: pointer;
+  font-size: 13px; line-height: 1; box-shadow: var(--shadow);
+  display: flex; align-items: center; justify-content: center;
+}
+.quick-actions button:hover { background: var(--accent); border-color: var(--accent); filter: saturate(1.2); }
+
+/* Minimappa */
+.minimap {
+  position: absolute; right: 12px; bottom: 12px; z-index: 15;
+  background: rgba(255,255,255,.92); border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: var(--shadow); padding: 4px; line-height: 0;
+}
+.minimap canvas { cursor: pointer; border-radius: 4px; }
 
 /* Pulsante comprimi/espandi il ramo ascendente */
 .collapse-btn {
@@ -302,4 +366,8 @@ html, body {
   .search-wrap input { width: 140px; }
   .search-results { width: 270px; }
   .hint-pan { display: none; }
+  .minimap { display: none; }
+  .view-modes .vm { padding: 8px 8px; font-size: 12px; }
+  .focus-label { display: none; }
+  .quick-actions { flex-direction: row; left: 0; top: calc(100% + 5px); }
 }

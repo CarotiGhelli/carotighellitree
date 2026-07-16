@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Albero Genealogico — Caroti Ghelli</title>
-  <link rel="stylesheet" href="styles.css?v=7" />
+  <link rel="stylesheet" href="styles.css?v=8" />
 </head>
 <body>
 
@@ -19,6 +19,14 @@
         <input id="searchBox" type="search" placeholder="🔍 Cerca persona…" autocomplete="off" />
         <div id="searchResults" class="search-results" hidden></div>
       </div>
+
+      <div id="viewModes" class="view-modes" title="Modalità di visualizzazione">
+        <button class="vm" data-mode="family" title="Focus + parenti vicini">Famiglia</button>
+        <button class="vm" data-mode="ancestors" title="Solo ascendenti del focus">Ascendenti</button>
+        <button class="vm" data-mode="descendants" title="Solo discendenti del focus">Discendenti</button>
+        <button class="vm" data-mode="all" title="Tutto l'albero">Tutto</button>
+      </div>
+      <span id="focusLabel" class="focus-label" hidden></span>
 
       <button id="btnAdd" class="btn btn-primary">+ Persona</button>
 
@@ -75,7 +83,8 @@
       <p>L'albero è vuoto.</p>
       <p>Premi <strong>+ Persona</strong> per iniziare, oppure <strong>Importa GEDCOM</strong>.</p>
     </div>
-    <div class="hint-pan">Trascina per spostare · rotellina/pizzico per zoom · doppio clic su una persona = famiglia stretta</div>
+    <div class="hint-pan">Trascina per spostare · rotellina/pizzico per zoom · clic = centra · doppio clic = famiglia stretta</div>
+    <div id="minimap" class="minimap"><canvas id="minimapCanvas" width="200" height="130"></canvas></div>
   </main>
 
   <!-- Modale generica (famiglia stretta, statistiche, cronologia) -->
@@ -168,7 +177,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 
   <script src="firebase-config.js"></script>
-  <script src="gedcom.js?v=7"></script>
-  <script src="app.js?v=7"></script>
+  <script src="gedcom.js?v=8"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
