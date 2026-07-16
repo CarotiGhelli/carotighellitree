@@ -617,14 +617,25 @@
       </div>
       ${living ? `<span class="living-dot" title="In vita"></span>` : ""}
       <span class="edit-pencil">✎</span>`;
-    // Clic singolo = scheda; doppio clic = famiglia stretta; in modalità percorso = selezione
+    // Clic: in modalità selezione = spunta; in modalità percorso = scelta; altrimenti scheda.
+    // Doppio clic = famiglia stretta.
     el.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (selectMode) { toggleSelect(p.id); return; }
       if (pathMode) { selectForPath(p.id); return; }
       clearTimeout(el._ct);
       el._ct = setTimeout(() => openEditor(p.id), 240);
     });
-    el.addEventListener("dblclick", (e) => { e.stopPropagation(); clearTimeout(el._ct); openFocus(p.id); });
+    el.addEventListener("dblclick", (e) => { e.stopPropagation(); clearTimeout(el._ct); if (selectMode || pathMode) return; openFocus(p.id); });
+
+    // Riapplica lo stato di selezione se la carta viene ricreata durante la modalità
+    if (selectMode) {
+      el.classList.add("selectable");
+      if (selected.has(p.id)) {
+        el.classList.add("selected");
+        const c = document.createElement("span"); c.className = "sel-check"; c.textContent = "✓"; el.appendChild(c);
+      }
+    }
 
     // Aggiungi figlio/a (in basso)
     const add = document.createElement("div");
@@ -1121,6 +1132,75 @@
     openModal("Cronologia modifiche", html);
   }
 
+  // ============================================================ SELEZIONE MULTIPLA
+  let selectMode = false;
+  const selected = new Set();
+
+  function enterSelectMode() {
+    if (pathMode) exitPathMode();
+    selectMode = true; selected.clear();
+    viewportEl.classList.add("selecting");
+    $("#btnSelect").classList.add("active");
+    $("#selectBar").hidden = false;
+    cardsEl.querySelectorAll(".card").forEach((c) => c.classList.add("selectable"));
+    updateSelectBar();
+    showToast("Clicca le persone da eliminare, poi «Elimina selezionate»", 5000);
+  }
+  function exitSelectMode() {
+    selectMode = false; selected.clear();
+    viewportEl.classList.remove("selecting");
+    $("#btnSelect").classList.remove("active");
+    $("#selectBar").hidden = true;
+    cardsEl.querySelectorAll(".card").forEach((c) => {
+      c.classList.remove("selectable", "selected");
+      const chk = c.querySelector(".sel-check"); if (chk) chk.remove();
+    });
+  }
+  function updateSelectBar() {
+    const n = selected.size;
+    $("#selectCount").textContent = n === 1 ? "1 selezionata" : `${n} selezionate`;
+    $("#btnSelectDelete").disabled = n === 0;
+  }
+  function toggleSelect(id) {
+    const el = cardsEl.querySelector(`.card[data-id="${id}"]`);
+    if (selected.has(id)) {
+      selected.delete(id);
+      if (el) { el.classList.remove("selected"); const c = el.querySelector(".sel-check"); if (c) c.remove(); }
+    } else {
+      selected.add(id);
+      if (el) {
+        el.classList.add("selected");
+        if (!el.querySelector(".sel-check")) { const c = document.createElement("span"); c.className = "sel-check"; c.textContent = "✓"; el.appendChild(c); }
+      }
+    }
+    updateSelectBar();
+  }
+  function selectAllVisible() {
+    if (!lastLayout) return;
+    for (const id in lastLayout.pos) if (!selected.has(id)) toggleSelect(id);
+    updateSelectBar();
+  }
+  function deleteSelected() {
+    if (!selected.size) return;
+    if (!ensureCanEdit()) return;
+    const ids = [...selected];
+    const names = ids.map((id) => fullName(findPerson(id) || {})).filter(Boolean);
+    const preview = names.slice(0, 8).join(", ") + (names.length > 8 ? `, … (+${names.length - 8})` : "");
+    if (!confirm(`Eliminare definitivamente ${ids.length} person${ids.length === 1 ? "a" : "e"}?\n\n${preview}\n\nL'operazione non è reversibile (fai prima un Backup se non sei sicuro).`)) return;
+    const idset = new Set(ids);
+    state.persons = state.persons.filter((p) => !idset.has(p.id));
+    for (const f of state.families) {
+      if (idset.has(f.husb)) f.husb = null;
+      if (idset.has(f.wife)) f.wife = null;
+      f.children = f.children.filter((c) => !idset.has(c));
+    }
+    state.families = state.families.filter((f) => f.husb || f.wife || f.children.length);
+    save(`Eliminate ${ids.length} persone: ${names.slice(0, 5).join(", ")}${names.length > 5 ? "…" : ""}`);
+    exitSelectMode();
+    render();
+    showToast(`${ids.length} persone eliminate ✓`);
+  }
+
   // ============================================================ PERCORSO DI PARENTELA
   let pathMode = false, pathSel = [];
   function enterPathMode() {
@@ -1350,6 +1430,10 @@
     $("#btnHistory").addEventListener("click", openHistory);
     $("#btnPng").addEventListener("click", () => exportPNG());
     $("#btnPath").addEventListener("click", () => { if (pathMode) exitPathMode(); else enterPathMode(); });
+    $("#btnSelect").addEventListener("click", () => { if (selectMode) exitSelectMode(); else enterSelectMode(); });
+    $("#btnSelectCancel").addEventListener("click", exitSelectMode);
+    $("#btnSelectDelete").addEventListener("click", deleteSelected);
+    $("#btnSelectAllVisible").addEventListener("click", selectAllVisible);
     $("#modalClose").addEventListener("click", closeModal);
     $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
     bindSearch();
@@ -1357,6 +1441,7 @@
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         if (!$("#modal").hidden) { closeModal(); return; }
+        if (selectMode) { exitSelectMode(); return; }
         if (pathMode) { exitPathMode(); return; }
         if (!$("#editor").hidden) closeEditor();
         return;

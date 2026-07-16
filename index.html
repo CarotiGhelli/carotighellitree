@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Albero Genealogico — Caroti Ghelli</title>
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
 
@@ -38,6 +38,7 @@
 
       <span class="sep"></span>
 
+      <button id="btnSelect" class="btn btn-icon" title="Seleziona più persone ed eliminale insieme">☑️</button>
       <button id="btnPath" class="btn btn-icon" title="Evidenzia il legame di parentela tra due persone">🧭</button>
       <button id="btnStats" class="btn btn-icon" title="Statistiche e compleanni">📊</button>
       <button id="btnHistory" class="btn btn-icon" title="Cronologia delle modifiche">🕐</button>
@@ -56,6 +57,14 @@
   </header>
 
   <div id="syncStatus" class="sync-status" hidden></div>
+
+  <!-- Barra della selezione multipla -->
+  <div id="selectBar" class="select-bar" hidden>
+    <span id="selectCount">0 selezionate</span>
+    <button id="btnSelectAllVisible" class="btn btn-sm">Seleziona tutte visibili</button>
+    <button id="btnSelectDelete" class="btn btn-sm btn-danger">Elimina selezionate</button>
+    <button id="btnSelectCancel" class="btn btn-sm">Annulla</button>
+  </div>
 
   <main id="viewport" class="viewport">
     <div id="world" class="world">
@@ -159,7 +168,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 
   <script src="firebase-config.js"></script>
-  <script src="gedcom.js?v=6"></script>
-  <script src="app.js?v=6"></script>
+  <script src="gedcom.js?v=7"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>

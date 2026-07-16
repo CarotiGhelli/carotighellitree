@@ -48,6 +48,7 @@ Sto lavorando al sito web del mio albero genealogico di famiglia. Ecco tutto il 
 - **Statistiche** (📊): persone, famiglie, generazioni, in vita, M/F, cognomi più frequenti, persona più anziana, **compleanni nei prossimi 60 giorni** (esclusi >105 anni presunti deceduti).
 - **Percorso di parentela** (🧭): clicchi due persone e viene evidenziato il legame più corto (carte in arancione, resto offuscato, linea sovrapposta); Esc per uscire.
 - **Mobile**: pan a un dito, pinch-to-zoom a due dita, toolbar che va a capo, pulsanti più grandi, editor a tutto schermo (media query ≤700px).
+- **Selezione multipla ed eliminazione** (☑️): attiva la modalità, clicca le persone (spunta rossa), "Seleziona tutte visibili", poi "Elimina selezionate" (conferma + PIN, una sola scrittura, cronologia). Esc/Annulla per uscire. I connettori familiari sono su **corsie separate** (binari a altezze sfalsate) per non fondersi in un'unica linea.
 
 ## COSA VOGLIO MIGLIORARE ORA
 
