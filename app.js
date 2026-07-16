@@ -503,6 +503,7 @@
 
     // --- Connettori SVG ---
     const segs = [];
+    const buses = []; // un "binario" orizzontale per famiglia (genitori -> figli)
     for (const fam of families) {
       const parents = [fam.husb, fam.wife].filter((x) => x && pos[x]);
       const kids = fam.children.filter((c) => pos[c]);
@@ -516,11 +517,41 @@
       } else {
         midX = pos[parents[0]].x + CARD_W / 2; bottomY = pos[parents[0]].y + CARD_H;
       }
-      for (const c of kids) {
-        const cx = pos[c].x + CARD_W / 2, cy = pos[c].y, busY = (bottomY + cy) / 2;
-        segs.push({ x1: midX, y1: bottomY, x2: midX, y2: busY });
-        segs.push({ x1: midX, y1: busY, x2: cx, y2: busY });
-        segs.push({ x1: cx, y1: busY, x2: cx, y2: cy });
+      if (!kids.length) continue;
+      const childTop = Math.min(...kids.map((c) => pos[c].y));
+      const centers = kids.map((c) => pos[c].x + CARD_W / 2);
+      buses.push({ kids, midX, bottomY, childTop, x1: Math.min(midX, ...centers), x2: Math.max(midX, ...centers) });
+    }
+
+    // Ogni famiglia ha la sua CORSIA: famiglie che scendono nella stessa riga e sono
+    // orizzontalmente vicine ricevono altezze diverse, così i binari di fratelli di
+    // famiglie diverse non si fondono mai in un'unica linea continua.
+    const groups = {};
+    for (const b of buses) { const k = Math.round(b.childTop); (groups[k] = groups[k] || []).push(b); }
+    for (const k in groups) {
+      const gs = groups[k].sort((a, b) => a.x1 - b.x1);
+      const laneEnd = []; // per ogni corsia, l'ultima x occupata
+      // Due famiglie condividono la stessa altezza solo se molto distanti (>400px):
+      // così due binari vicini non vengono mai percepiti come un'unica linea.
+      for (const b of gs) {
+        let lane = laneEnd.findIndex((e) => b.x1 > e + 400);
+        if (lane === -1) { lane = laneEnd.length; laneEnd.push(b.x2); }
+        else laneEnd[lane] = b.x2;
+        b.lane = lane;
+      }
+      const lanes = laneEnd.length;
+      for (const b of gs) {
+        const gap = b.childTop - b.bottomY;
+        const step = Math.min(12, Math.max(7, (gap - 18) / Math.max(1, lanes - 1)));
+        b.busY = Math.max(b.bottomY + 8, b.childTop - 12 - b.lane * step);
+      }
+    }
+    for (const b of buses) {
+      segs.push({ x1: b.midX, y1: b.bottomY, x2: b.midX, y2: b.busY });
+      segs.push({ x1: b.x1, y1: b.busY, x2: b.x2, y2: b.busY });
+      for (const c of b.kids) {
+        const cx = pos[c].x + CARD_W / 2;
+        segs.push({ x1: cx, y1: b.busY, x2: cx, y2: pos[c].y });
       }
     }
     const linksSvg = segs.map((s) =>
