@@ -14,6 +14,7 @@
   let unsubscribeSnapshot = null;
   let saveTimer = null;
   let tempPhoto = null;
+  let historyLog = []; // cronologia modifiche (specchiata su Firestore nel documento principale)
 
   const CARD_W = 160, CARD_H = 64;
   const H_GAP = 26, COUPLE_GAP = 26, V_GAP = 116, TREE_GAP = 80;
@@ -46,19 +47,72 @@
     clearTimeout(el._t); el._t = setTimeout(() => { el.hidden = true; }, ms);
   }
 
+  // ============================================================ PIN DI FAMIGLIA (protezione scrittura)
+  // Chiunque può GUARDARE l'albero; per MODIFICARE serve questo PIN (chiesto una sola
+  // volta per dispositivo). Per cambiarlo, modifica la riga qui sotto.
+  const FAMILY_PIN = "ghelli";
+  const PIN_KEY = "albero-pin-v1";
+  function ensureCanEdit() {
+    try { if (localStorage.getItem(PIN_KEY) === FAMILY_PIN) return true; } catch (_) {}
+    const p = prompt("PIN di famiglia per modificare l'albero:");
+    if (p === null) return false;
+    if (p.trim().toLowerCase() === FAMILY_PIN) {
+      try { localStorage.setItem(PIN_KEY, FAMILY_PIN); } catch (_) {}
+      return true;
+    }
+    alert("PIN errato. Puoi comunque consultare l'albero, ma non modificarlo.");
+    return false;
+  }
+
+  // Nome di chi modifica (per la cronologia), chiesto una sola volta per dispositivo
+  const USER_KEY = "albero-user-name";
+  function getUserName() {
+    let n = "";
+    try { n = localStorage.getItem(USER_KEY) || ""; } catch (_) {}
+    if (!n) {
+      n = (prompt("Il tuo nome (comparirà nella cronologia delle modifiche):") || "Anonimo").trim() || "Anonimo";
+      try { localStorage.setItem(USER_KEY, n); } catch (_) {}
+    }
+    return n;
+  }
+
+  // ============================================================ DATE (anno, giorno/mese, età)
+  function yearOf(s) { const m = String(s || "").match(/\d{3,4}/); return m ? parseInt(m[0], 10) : null; }
+  const MONTHS = { GEN: 1, JAN: 1, FEB: 2, MAR: 3, APR: 4, MAG: 5, MAY: 5, GIU: 6, JUN: 6, LUG: 7, JUL: 7, AGO: 8, AUG: 8, SET: 9, SEP: 9, OTT: 10, OCT: 10, NOV: 11, DIC: 12, DEC: 12 };
+  function dayMonthOf(s) {
+    s = String(s || "").trim();
+    let m = s.match(/^(\d{1,2})[\/\-\.\s]+(\d{1,2})[\/\-\.\s]+\d{3,4}$/);
+    if (m) { const d = +m[1], mo = +m[2]; if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) return { d, m: mo }; }
+    m = s.match(/(\d{1,2})\s+([A-Za-z]{3,})/);
+    if (m) { const mo = MONTHS[m[2].slice(0, 3).toUpperCase()]; const d = +m[1]; if (mo && d >= 1 && d <= 31) return { d, m: mo }; }
+    return null;
+  }
+  function ageOf(p) {
+    const by = yearOf(p.birth); if (by == null) return null;
+    const end = (p.death || p.deceased) ? yearOf(p.death) : new Date().getFullYear();
+    if (end == null) return null;
+    const a = end - by;
+    return (a >= 0 && a < 130) ? a : null;
+  }
+
   // ============================================================ PERSISTENZA
   function saveView() { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) {} }
   function loadView() { try { const v = JSON.parse(localStorage.getItem(VIEW_KEY) || "null"); if (v) Object.assign(view, v); } catch (_) {} }
 
-  function save() {
+  function save(label) {
     if (!window.db) return;
     clearTimeout(saveTimer);
     showToast("Salvando…", 60000);
     saveTimer = setTimeout(() => {
+      const who = getUserName();
+      historyLog.push({ t: Date.now(), who, a: label || "Modifica" });
+      if (historyLog.length > 100) historyLog = historyLog.slice(-100);
       window.db.collection("trees").doc("main").set({
         persons: state.persons,
         families: state.families,
         seq,
+        history: historyLog,
+        updatedBy: who,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       })
         .then(() => showToast("Salvato ✓"))
@@ -77,7 +131,7 @@
 
         if (!snap.exists) {
           // Il documento è davvero assente sul server: crea i dati iniziali UNA sola volta.
-          if (!seededOnce) { seededOnce = true; seedData(); save(); render(); fitToScreen(); }
+          if (!seededOnce) { seededOnce = true; seedData(); save("Creazione dati iniziali"); render(); fitToScreen(); }
           return;
         }
         const data = snap.data();
@@ -86,6 +140,7 @@
         if (!saveTimer) {
           state = { persons: data.persons || [], families: data.families || [] };
           seq = data.seq || 1;
+          historyLog = Array.isArray(data.history) ? data.history : [];
           render();
         }
       },
@@ -201,7 +256,7 @@
     const families = state.families
       .map((f) => ({ id: f.id, husb: f.husb && !hidden.has(f.husb) ? f.husb : null, wife: f.wife && !hidden.has(f.wife) ? f.wife : null, children: f.children.filter((c) => !hidden.has(c)) }))
       .filter((f) => f.husb || f.wife || f.children.length);
-    if (!persons.length) return { pos: {}, linksSvg: "", width: 0, height: 0 };
+    if (!persons.length) return { pos: {}, segs: [], linksSvg: "", width: 0, height: 0 };
 
     const byId = {}; persons.forEach((p) => (byId[p.id] = p));
 
@@ -472,7 +527,7 @@
       `<line x1="${s.x1.toFixed(1)}" y1="${s.y1.toFixed(1)}" x2="${s.x2.toFixed(1)}" y2="${s.y2.toFixed(1)}" stroke="#9aa7b2" stroke-width="2" stroke-linecap="round"/>`
     ).join("");
 
-    return { pos, linksSvg, width: maxX, height: maxY };
+    return { pos, segs, linksSvg, width: maxX, height: maxY };
   }
 
   // ============================================================ RENDER
@@ -494,6 +549,7 @@
   }
 
   function render() {
+    if (pathMode) exitPathMode();
     cardsEl.innerHTML = "";
     currentClash = computeClashMap();
     const layout = computeLayout();
@@ -530,7 +586,14 @@
       </div>
       ${living ? `<span class="living-dot" title="In vita"></span>` : ""}
       <span class="edit-pencil">✎</span>`;
-    el.addEventListener("click", (e) => { e.stopPropagation(); openEditor(p.id); });
+    // Clic singolo = scheda; doppio clic = famiglia stretta; in modalità percorso = selezione
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (pathMode) { selectForPath(p.id); return; }
+      clearTimeout(el._ct);
+      el._ct = setTimeout(() => openEditor(p.id), 240);
+    });
+    el.addEventListener("dblclick", (e) => { e.stopPropagation(); clearTimeout(el._ct); openFocus(p.id); });
 
     // Aggiungi figlio/a (in basso)
     const add = document.createElement("div");
@@ -560,9 +623,10 @@
 
   function formatDates(p) {
     const b = p.birth || "", d = p.death || "";
+    const a = ageOf(p);
     if (!b && !d) return p.birthPlace || "";
-    if (b && d) return `${shortYear(b)} – ${shortYear(d)}`;
-    if (b) return `n. ${shortYear(b)}`;
+    if (b && d) return `${shortYear(b)} – ${shortYear(d)}${a != null ? ` · ${a}` : ""}`;
+    if (b) return `n. ${shortYear(b)}${a != null && !p.deceased && !p.death ? ` · ${a} anni` : ""}`;
     if (d) return `† ${shortYear(d)}`;
     return "";
   }
@@ -591,6 +655,46 @@
       const r = viewportEl.getBoundingClientRect();
       zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.1 : 1 / 1.1);
     }, { passive: false });
+
+    // --- Touch (telefono/tablet): 1 dito = sposta, 2 dita = pizzica per lo zoom ---
+    let tPan = null, tPinch = null;
+    const tDist = (e) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    viewportEl.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1) {
+        if (e.target.closest(".card") || e.target.closest(".add-btn") || e.target.closest(".collapse-btn")) return;
+        tPan = { sx: e.touches[0].clientX, sy: e.touches[0].clientY, ox: view.x, oy: view.y };
+      } else if (e.touches.length === 2) {
+        tPan = null;
+        tPinch = { d0: tDist(e), s0: view.scale };
+        e.preventDefault();
+      }
+    }, { passive: false });
+    viewportEl.addEventListener("touchmove", (e) => {
+      if (tPinch && e.touches.length === 2) {
+        e.preventDefault();
+        const r = viewportEl.getBoundingClientRect();
+        const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
+        const my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
+        const target = Math.min(2.5, Math.max(0.2, tPinch.s0 * tDist(e) / tPinch.d0));
+        const k = target / view.scale;
+        view.x = mx - (mx - view.x) * k;
+        view.y = my - (my - view.y) * k;
+        view.scale = target;
+        applyTransform();
+      } else if (tPan && e.touches.length === 1) {
+        e.preventDefault();
+        view.x = tPan.ox + (e.touches[0].clientX - tPan.sx);
+        view.y = tPan.oy + (e.touches[0].clientY - tPan.sy);
+        applyTransform();
+      }
+    }, { passive: false });
+    viewportEl.addEventListener("touchend", (e) => {
+      if (e.touches.length === 0) { if (tPan || tPinch) saveView(); tPan = null; tPinch = null; }
+      else if (e.touches.length === 1 && tPinch) {
+        tPinch = null;
+        tPan = { sx: e.touches[0].clientX, sy: e.touches[0].clientY, ox: view.x, oy: view.y };
+      }
+    });
   }
 
   function zoomAt(mx, my, factor) {
@@ -657,13 +761,14 @@
 
   function saveCurrent(silent) {
     const p = findPerson(editingId); if (!p) return;
+    if (!ensureCanEdit()) return;
     p.first = $("#fFirst").value.trim(); p.last = $("#fLast").value.trim();
     p.sex = $("#fSex").value;
     p.birth = $("#fBirth").value.trim(); p.birthPlace = $("#fBirthPlace").value.trim();
     p.death = $("#fDeath").value.trim(); p.deathPlace = $("#fDeathPlace").value.trim();
     p.deceased = !!(p.death || p.deathPlace);
     p.notes = $("#fNotes").value; p.photo = tempPhoto || "";
-    save(); render();
+    save(`Modificata la scheda di ${fullName(p)}`); render();
     if (!silent) closeEditor();
   }
 
@@ -675,6 +780,8 @@
   }
 
   function addChildTo(parentId) {
+    if (!ensureCanEdit()) return;
+    const parentName = fullName(findPerson(parentId) || {});
     let fam = familiesAsSpouse(parentId)[0];
     if (!fam) {
       fam = { id: newId("F"), husb: null, wife: null, children: [] };
@@ -683,10 +790,11 @@
       state.families.push(fam);
     }
     const child = createPerson({ last: (findPerson(parentId) || {}).last || "" });
-    fam.children.push(child.id); save(); render(); openEditor(child.id);
+    fam.children.push(child.id); save(`Aggiunto/a figlio/a a ${parentName}`); render(); openEditor(child.id);
   }
 
   function addPartner(personId) {
+    if (!ensureCanEdit()) return;
     const person = findPerson(personId);
     let fam = familiesAsSpouse(personId)[0];
     if (!fam) { fam = { id: newId("F"), husb: null, wife: null, children: [] }; state.families.push(fam); }
@@ -694,26 +802,30 @@
     const partner = createPerson({ first: "Coniuge", last: "", sex: partnerSex });
     if (person.sex === "F") { fam.wife = personId; fam.husb = partner.id; }
     else { fam.husb = personId; fam.wife = partner.id; }
-    save(); render(); openEditor(partner.id);
+    save(`Aggiunto coniuge a ${fullName(person)}`); render(); openEditor(partner.id);
   }
 
   function addParents(personId) {
+    if (!ensureCanEdit()) return;
     let fam = familyAsChild(personId);
     if (!fam) { fam = { id: newId("F"), husb: null, wife: null, children: [personId] }; state.families.push(fam); }
     if (!fam.husb) { const f = createPerson({ first: "Padre", last: (findPerson(personId) || {}).last || "", sex: "M" }); fam.husb = f.id; }
     if (!fam.wife) { const m = createPerson({ first: "Madre", last: "", sex: "F" }); fam.wife = m.id; }
-    save(); render();
+    save(`Aggiunti genitori a ${fullName(findPerson(personId) || {})}`); render();
   }
 
   function removeChildFromFamily(famId, childId) {
+    if (!ensureCanEdit()) return;
     const f = findFamily(famId); if (!f) return;
-    f.children = f.children.filter((c) => c !== childId); cleanupFamily(famId); save(); render();
+    f.children = f.children.filter((c) => c !== childId); cleanupFamily(famId);
+    save(`Scollegato/a ${fullName(findPerson(childId) || {})} dai genitori`); render();
   }
 
   function unlinkSpouse(famId, personId) {
+    if (!ensureCanEdit()) return;
     const f = findFamily(famId); if (!f) return;
     if (f.husb === personId) f.husb = null; else if (f.wife === personId) f.wife = null;
-    cleanupFamily(famId); save(); render();
+    cleanupFamily(famId); save(`Scollegato coniuge di ${fullName(findPerson(personId) || {})}`); render();
   }
 
   function cleanupFamily(famId) {
@@ -722,22 +834,25 @@
   }
 
   function deletePerson(id) {
+    if (!ensureCanEdit()) return;
+    const name = fullName(findPerson(id) || {});
     state.persons = state.persons.filter((p) => p.id !== id);
     for (const f of state.families) {
       if (f.husb === id) f.husb = null; if (f.wife === id) f.wife = null;
       f.children = f.children.filter((c) => c !== id);
     }
     state.families = state.families.filter((f) => f.husb || f.wife || f.children.length);
-    save(); render();
+    save(`Eliminata la persona: ${name}`); render();
   }
 
   // ============================================================ IMPORT / EXPORT
   function importGedcomText(text) {
+    if (!ensureCanEdit()) return;
     const data = window.GEDCOM.parse(text);
     if (!data.persons.length) { alert("Nessuna persona trovata nel file GEDCOM."); return; }
     state = data; seq = 1;
     state.persons.forEach((p) => bumpSeq(p.id)); state.families.forEach((f) => bumpSeq(f.id));
-    save(); render(); fitToScreen();
+    save("Importato albero da file GEDCOM"); render(); fitToScreen();
   }
   function bumpSeq(id) { const m = String(id).match(/(\d+)/); if (m) seq = Math.max(seq, parseInt(m[1], 10) + 1); }
 
@@ -785,9 +900,368 @@
     state = { persons: P, families: F }; seq = 20;
   }
 
+  // ============================================================ MODALE GENERICA
+  function openModal(title, bodyHtml) {
+    $("#modalTitle").textContent = title;
+    $("#modalBody").innerHTML = bodyHtml;
+    $("#modal").hidden = false;
+    return $("#modalBody");
+  }
+  function closeModal() { $("#modal").hidden = true; }
+
+  // Riga-persona cliccabile riutilizzata da ricerca / famiglia stretta / statistiche
+  function miniPersonHtml(p, extra) {
+    const dotCls = p.sex === "M" ? "male" : p.sex === "F" ? "female" : "unknown";
+    return `<div class="mini-person" data-id="${p.id}">
+      <span class="mini-dot ${dotCls}"></span>
+      <span class="mini-name">${escapeHtml(fullName(p))}</span>
+      <span class="mini-extra">${escapeHtml(extra != null ? extra : (formatDates(p) || ""))}</span>
+    </div>`;
+  }
+
+  // ============================================================ RICERCA
+  function bindSearch() {
+    const box = $("#searchBox"), res = $("#searchResults");
+    const hide = () => { res.hidden = true; };
+    box.addEventListener("input", () => {
+      const q = box.value.trim().toLowerCase();
+      if (q.length < 2) { hide(); return; }
+      const matches = state.persons.filter((p) => fullName(p).toLowerCase().includes(q)).slice(0, 8);
+      if (!matches.length) { res.innerHTML = `<div class="search-empty">Nessun risultato</div>`; res.hidden = false; return; }
+      res.innerHTML = matches.map((p) => {
+        const vis = lastLayout && lastLayout.pos[p.id];
+        return miniPersonHtml(p, (formatDates(p) || "") + (vis ? "" : " · nascosta"));
+      }).join("");
+      res.hidden = false;
+    });
+    res.addEventListener("mousedown", (e) => {
+      const row = e.target.closest(".mini-person"); if (!row) return;
+      e.preventDefault();
+      const id = row.dataset.id;
+      box.value = ""; hide(); box.blur();
+      if (lastLayout && lastLayout.pos[id]) centerOnPerson(id);
+      else openFocus(id); // nascosta dalla linea genealogica: mostra la famiglia stretta
+    });
+    box.addEventListener("blur", () => setTimeout(hide, 200));
+    box.addEventListener("keydown", (e) => { if (e.key === "Escape") { box.value = ""; hide(); box.blur(); } });
+  }
+
+  function centerOnPerson(id) {
+    const pp = lastLayout && lastLayout.pos[id];
+    if (!pp) { openFocus(id); return; }
+    const vw = viewportEl.clientWidth, vh = viewportEl.clientHeight;
+    if (view.scale < 0.7) view.scale = 0.9;
+    view.x = vw / 2 - (pp.x + CARD_W / 2) * view.scale;
+    view.y = vh / 2.6 - pp.y * view.scale;
+    applyTransform(); saveView();
+    const el = cardsEl.querySelector(`.card[data-id="${id}"]`);
+    if (el) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2800); }
+  }
+
+  // ============================================================ FAMIGLIA STRETTA
+  function openFocus(id) {
+    const p = findPerson(id); if (!p) return;
+    const cf = familyAsChild(id);
+    const parents = [], siblings = [];
+    if (cf) {
+      if (cf.husb && findPerson(cf.husb)) parents.push(findPerson(cf.husb));
+      if (cf.wife && findPerson(cf.wife)) parents.push(findPerson(cf.wife));
+      for (const c of cf.children) if (c !== id && findPerson(c)) siblings.push(findPerson(c));
+    }
+    const unions = familiesAsSpouse(id).map((f) => ({
+      spouse: findPerson(partnerOf(f.id, id)),
+      children: f.children.map(findPerson).filter(Boolean),
+    }));
+    const sect = (title, arr) => arr.length ? `<div class="focus-sect"><h4>${title}</h4>${arr.map((x) => miniPersonHtml(x)).join("")}</div>` : "";
+    let html = `<div class="focus-me">${miniPersonHtml(p)}</div>`;
+    html += sect("Genitori", parents);
+    html += sect("Fratelli e sorelle", siblings);
+    for (const u of unions) {
+      if (u.spouse) html += sect("Coniuge", [u.spouse]);
+      html += sect("Figli", u.children);
+    }
+    if (!parents.length && !siblings.length && !unions.length) html += `<p class="focus-none">Nessuna relazione registrata.</p>`;
+    const visible = lastLayout && lastLayout.pos[id];
+    html += `<div class="focus-actions">
+      ${visible ? `<button class="btn" id="focusCenter">Mostra nell'albero</button>` : ""}
+      <button class="btn btn-primary" id="focusEdit">Apri scheda</button>
+    </div>`;
+    const body = openModal("Famiglia di " + fullName(p), html);
+    body.querySelectorAll(".mini-person").forEach((row) => {
+      if (row.dataset.id !== id) row.addEventListener("click", () => openFocus(row.dataset.id));
+    });
+    const fc = body.querySelector("#focusCenter");
+    if (fc) fc.addEventListener("click", () => { closeModal(); centerOnPerson(id); });
+    body.querySelector("#focusEdit").addEventListener("click", () => { closeModal(); openEditor(id); });
+  }
+
+  // ============================================================ STATISTICHE & COMPLEANNI
+  function computeGenerationsCount() {
+    if (!state.persons.length) return 0;
+    const g = buildGraph();
+    const gen = {};
+    state.persons.forEach((p) => (gen[p.id] = 0));
+    for (let it = 0; it < state.persons.length + 5; it++) {
+      let ch = false;
+      // i coniugi stanno sulla stessa generazione (come nel disegno)
+      for (const f of state.families) {
+        if (f.husb && f.wife && g.byId[f.husb] && g.byId[f.wife]) {
+          const m = Math.max(gen[f.husb], gen[f.wife]);
+          if (gen[f.husb] !== m) { gen[f.husb] = m; ch = true; }
+          if (gen[f.wife] !== m) { gen[f.wife] = m; ch = true; }
+        }
+      }
+      for (const f of state.families) {
+        const ps = [f.husb, f.wife].filter((x) => x && g.byId[x]);
+        if (!ps.length) continue;
+        const pg = Math.max(...ps.map((x) => gen[x]));
+        for (const c of f.children) if (g.byId[c] && gen[c] <= pg) { gen[c] = pg + 1; ch = true; }
+      }
+      if (!ch) break;
+    }
+    let mx = 0; state.persons.forEach((p) => (mx = Math.max(mx, gen[p.id])));
+    return mx + 1;
+  }
+
+  function upcomingBirthdays(days) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const out = [];
+    for (const p of state.persons) {
+      if (p.deceased || p.death) continue;
+      const dm = dayMonthOf(p.birth); if (!dm) continue;
+      let next = new Date(today.getFullYear(), dm.m - 1, dm.d);
+      if (next < today) next = new Date(today.getFullYear() + 1, dm.m - 1, dm.d);
+      const diff = Math.round((next - today) / 86400000);
+      if (diff <= days) {
+        const by = yearOf(p.birth);
+        const turns = by != null ? next.getFullYear() - by : null;
+        // Persone nate >105 anni fa senza data di morte: quasi certamente decedute
+        // ma non registrate — meglio non mostrarle tra i compleanni.
+        if (turns != null && turns > 105) continue;
+        out.push({ p, next, diff, turns });
+      }
+    }
+    out.sort((a, b) => a.diff - b.diff);
+    return out;
+  }
+
+  function openStats() {
+    const ps = state.persons;
+    const male = ps.filter((p) => p.sex === "M").length;
+    const female = ps.filter((p) => p.sex === "F").length;
+    const living = ps.filter((p) => !p.deceased && !p.death).length;
+    const surn = {};
+    ps.forEach((p) => { const l = (p.last || "").trim(); if (l) surn[l] = (surn[l] || 0) + 1; });
+    const top = Object.entries(surn).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    let oldest = null;
+    ps.forEach((p) => { if (!p.deceased && !p.death) { const a = ageOf(p); if (a != null && (!oldest || a > oldest.a)) oldest = { p, a }; } });
+    const bd = upcomingBirthdays(60);
+    const fmt = new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long" });
+    let html = `<div class="stats-grid">
+      <div class="stat"><b>${ps.length}</b><span>persone</span></div>
+      <div class="stat"><b>${state.families.length}</b><span>famiglie</span></div>
+      <div class="stat"><b>${computeGenerationsCount()}</b><span>generazioni</span></div>
+      <div class="stat"><b>${living}</b><span>in vita</span></div>
+      <div class="stat"><b>${male}</b><span>maschi</span></div>
+      <div class="stat"><b>${female}</b><span>femmine</span></div>
+    </div>`;
+    if (oldest) html += `<p class="stats-line">Persona in vita più anziana: <strong>${escapeHtml(fullName(oldest.p))}</strong> (${oldest.a} anni)</p>`;
+    if (top.length) html += `<div class="focus-sect"><h4>Cognomi più frequenti</h4>${top.map(([l, n]) => `<div class="stats-row"><span>${escapeHtml(l)}</span><b>${n}</b></div>`).join("")}</div>`;
+    html += `<div class="focus-sect"><h4>Compleanni nei prossimi 60 giorni</h4>` +
+      (bd.length
+        ? bd.slice(0, 12).map((b) => miniPersonHtml(b.p, `${fmt.format(b.next)}${b.turns != null ? ` · compie ${b.turns}` : ""}${b.diff === 0 ? " · OGGI 🎂" : ""}`)).join("")
+        : `<p class="focus-none">Nessun compleanno imminente (o date senza giorno e mese).</p>`) +
+      `</div>`;
+    const body = openModal("Statistiche", html);
+    body.querySelectorAll(".mini-person").forEach((row) => row.addEventListener("click", () => {
+      closeModal();
+      const id = row.dataset.id;
+      if (lastLayout && lastLayout.pos[id]) centerOnPerson(id); else openFocus(id);
+    }));
+  }
+
+  // ============================================================ CRONOLOGIA MODIFICHE
+  function openHistory() {
+    const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "short", timeStyle: "short" });
+    const rows = historyLog.slice().reverse();
+    const html = rows.length
+      ? rows.map((h) => `<div class="hist-row"><span class="hist-when">${fmt.format(new Date(h.t))}</span><span class="hist-who">${escapeHtml(h.who || "?")}</span><span class="hist-what">${escapeHtml(h.a || "")}</span></div>`).join("")
+      : `<p class="focus-none">Nessuna modifica registrata finora. Da adesso ogni modifica verrà annotata qui, con nome e data.</p>`;
+    openModal("Cronologia modifiche", html);
+  }
+
+  // ============================================================ PERCORSO DI PARENTELA
+  let pathMode = false, pathSel = [];
+  function enterPathMode() {
+    pathMode = true; pathSel = [];
+    $("#btnPath").classList.add("active");
+    showToast("Clicca due persone per vedere il loro legame di parentela", 6000);
+  }
+  function exitPathMode() {
+    pathMode = false; pathSel = [];
+    $("#btnPath").classList.remove("active");
+    cardsEl.querySelectorAll(".card").forEach((c) => c.classList.remove("dim", "path-on", "path-sel"));
+    const ov = linksEl.querySelector("#pathOverlay"); if (ov) ov.remove();
+  }
+  function selectForPath(id) {
+    if (pathSel.includes(id)) return;
+    pathSel.push(id);
+    const el = cardsEl.querySelector(`.card[data-id="${id}"]`);
+    if (el) el.classList.add("path-sel");
+    if (pathSel.length === 2) showPath(pathSel[0], pathSel[1]);
+  }
+  function showPath(a, b) {
+    const g = buildGraph();
+    const visible = (id) => lastLayout && lastLayout.pos[id];
+    const prev = { [a]: null };
+    const q = [a];
+    while (q.length && !(b in prev)) {
+      const n = q.shift();
+      for (const m of [...g.parent[n], ...g.child[n], ...g.spouse[n]]) {
+        if (m in prev || !visible(m)) continue;
+        prev[m] = n; q.push(m);
+      }
+    }
+    if (!(b in prev)) { showToast("Nessun percorso visibile tra le due persone"); exitPathMode(); return; }
+    const path = []; let cur = b;
+    while (cur != null) { path.push(cur); cur = prev[cur]; }
+    const inPath = new Set(path);
+    cardsEl.querySelectorAll(".card").forEach((c) => c.classList.toggle("dim", !inPath.has(c.dataset.id)));
+    path.forEach((id) => { const el = cardsEl.querySelector(`.card[data-id="${id}"]`); if (el) { el.classList.add("path-on"); el.classList.remove("path-sel"); } });
+    const NS = "http://www.w3.org/2000/svg";
+    const gEl = document.createElementNS(NS, "g");
+    gEl.setAttribute("id", "pathOverlay");
+    for (let i = 0; i + 1 < path.length; i++) {
+      const p1 = lastLayout.pos[path[i]], p2 = lastLayout.pos[path[i + 1]];
+      const l = document.createElementNS(NS, "line");
+      l.setAttribute("x1", p1.x + CARD_W / 2); l.setAttribute("y1", p1.y + CARD_H / 2);
+      l.setAttribute("x2", p2.x + CARD_W / 2); l.setAttribute("y2", p2.y + CARD_H / 2);
+      l.setAttribute("class", "path-line");
+      gEl.appendChild(l);
+    }
+    linksEl.appendChild(gEl);
+    showToast(`Legame trovato: ${path.length - 1} passaggi · premi Esc per uscire`, 7000);
+  }
+
+  // ============================================================ ESPORTA PNG
+  function roundRectPath(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function wrapText(ctx, text, maxW) {
+    const words = String(text).split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = "";
+    for (const w of words) {
+      const t = cur ? cur + " " + w : w;
+      if (!cur || ctx.measureText(t).width <= maxW) cur = t;
+      else { lines.push(cur); cur = w; if (lines.length === 2) break; }
+    }
+    if (lines.length < 2 && cur) lines.push(cur);
+    return lines.slice(0, 2).map((ln) => {
+      if (ctx.measureText(ln).width <= maxW) return ln;
+      while (ln.length && ctx.measureText(ln + "…").width > maxW) ln = ln.slice(0, -1);
+      return ln + "…";
+    });
+  }
+  async function exportPNG(testOnly) {
+    if (!lastLayout || !lastLayout.width) { alert("Niente da esportare."); return null; }
+    const layout = lastLayout;
+    const PAD = 50;
+    const S = layout.width > 5000 ? 1.5 : 2;
+    const W = Math.ceil((layout.width + PAD * 2) * S);
+    const H = Math.ceil((layout.height + PAD * 2 + 24) * S);
+    const canvas = document.createElement("canvas");
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#f2f5f7"; ctx.fillRect(0, 0, W, H);
+    ctx.save(); ctx.scale(S, S); ctx.translate(PAD, PAD);
+
+    // connettori
+    ctx.strokeStyle = "#9aa7b2"; ctx.lineWidth = 2; ctx.lineCap = "round";
+    for (const s of layout.segs || []) { ctx.beginPath(); ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2); ctx.stroke(); }
+
+    // pre-carica le foto
+    const imgs = {};
+    await Promise.all(state.persons.filter((p) => layout.pos[p.id] && p.photo).map((p) => new Promise((res) => {
+      const im = new Image();
+      im.onload = () => { imgs[p.id] = im; res(); };
+      im.onerror = () => res();
+      im.src = p.photo;
+    })));
+
+    const COLORS = { M: ["#36a9d6", "#f3fbfe"], F: ["#e98aa6", "#fef6f8"], U: ["#b8c2cc", "#f7f9fb"] };
+    for (const p of state.persons) {
+      const pp = layout.pos[p.id]; if (!pp) continue;
+      const [bc, bg] = COLORS[p.sex === "M" || p.sex === "F" ? p.sex : "U"];
+      roundRectPath(ctx, pp.x, pp.y, CARD_W, CARD_H, 10);
+      ctx.fillStyle = bg; ctx.fill();
+      ctx.strokeStyle = bc; ctx.lineWidth = 2; ctx.stroke();
+      // avatar
+      const ax = pp.x + 8 + 23, ay = pp.y + CARD_H / 2, ar = 21;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(ax, ay, ar, 0, Math.PI * 2); ctx.clip();
+      if (imgs[p.id]) {
+        const im = imgs[p.id];
+        const k = Math.max((ar * 2) / im.width, (ar * 2) / im.height);
+        ctx.drawImage(im, ax - (im.width * k) / 2, ay - (im.height * k) / 2, im.width * k, im.height * k);
+      } else {
+        ctx.fillStyle = p.sex === "M" ? "#e2f3fb" : p.sex === "F" ? "#fce8ee" : "#e8edf1";
+        ctx.fillRect(ax - ar, ay - ar, ar * 2, ar * 2);
+        ctx.font = "20px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(p.sex === "F" ? "👩" : p.sex === "M" ? "👨" : "👤", ax, ay + 1);
+      }
+      ctx.restore();
+      // testo
+      const tx = pp.x + 8 + 46 + 8, maxW = CARD_W - (8 + 46 + 8) - 8;
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = "#2c3e50"; ctx.font = "700 12px 'Segoe UI', sans-serif";
+      const lines = wrapText(ctx, fullName(p), maxW);
+      const d = formatDates(p);
+      let ty = pp.y + (lines.length > 1 ? 24 : (d ? 28 : 36));
+      for (const ln of lines) { ctx.fillText(ln, tx, ty); ty += 14; }
+      if (d) { ctx.fillStyle = "#8795a1"; ctx.font = "10px 'Segoe UI', sans-serif"; ctx.fillText(d, tx, pp.y + CARD_H - 11); }
+      if (!p.deceased && !p.death) {
+        ctx.beginPath(); ctx.arc(pp.x + CARD_W - 11, pp.y + 11, 4, 0, Math.PI * 2);
+        ctx.fillStyle = "#46c07a"; ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
+      }
+    }
+
+    ctx.fillStyle = "#8795a1"; ctx.font = "12px 'Segoe UI', sans-serif"; ctx.textAlign = "left";
+    ctx.fillText("Albero Genealogico Caroti Ghelli — " + new Date().toLocaleDateString("it-IT"), 0, layout.height + PAD - 4);
+    ctx.restore();
+
+    if (testOnly) return { w: W, h: H };
+    canvas.toBlob((blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "albero-genealogico.png";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      showToast("PNG scaricato ✓");
+    }, "image/png");
+    return null;
+  }
+
+  // La toolbar può andare su più righe (mobile): tieni l'albero subito sotto
+  function fixViewportTop() {
+    const tb = document.querySelector(".toolbar");
+    if (tb) viewportEl.style.top = tb.offsetHeight + "px";
+  }
+
   // ============================================================ EVENTI UI
   function bindUI() {
-    $("#btnAdd").addEventListener("click", () => { const p = createPerson({ first: "Nuova", last: "Persona" }); save(); render(); openEditor(p.id); });
+    $("#btnAdd").addEventListener("click", () => {
+      if (!ensureCanEdit()) return;
+      const p = createPerson({ first: "Nuova", last: "Persona" });
+      save("Aggiunta una nuova persona"); render(); openEditor(p.id);
+    });
     $("#editorClose").addEventListener("click", closeEditor);
     $("#overlay").addEventListener("click", closeEditor);
     $("#btnSave").addEventListener("click", () => saveCurrent(false));
@@ -821,9 +1295,10 @@
       const file = e.target.files[0]; if (!file) return;
       const reader = new FileReader();
       reader.onload = () => {
+        if (!ensureCanEdit()) return;
         try {
           const d = JSON.parse(reader.result);
-          if (d.state && Array.isArray(d.state.persons)) { state = d.state; seq = d.seq || 20; save(); render(); fitToScreen(); }
+          if (d.state && Array.isArray(d.state.persons)) { state = d.state; seq = d.seq || 20; save("Ripristinato da backup JSON"); render(); fitToScreen(); }
           else alert("File di backup non valido.");
         } catch { alert("Impossibile leggere il JSON."); }
       };
@@ -833,15 +1308,31 @@
     $("#btnZoomOut").addEventListener("click", () => zoomAt(viewportEl.clientWidth / 2, viewportEl.clientHeight / 2, 1 / 1.15));
     $("#btnZoomReset").addEventListener("click", fitToScreen);
     $("#btnReset").addEventListener("click", () => {
+      if (!ensureCanEdit()) return;
       if (confirm("Cancellare tutto l'albero? Fai prima un Backup.")) {
-        state = { persons: [], families: [] }; seq = 1; save(); render();
+        state = { persons: [], families: [] }; seq = 1; save("Svuotato l'intero albero"); render();
       }
     });
+
+    // Nuove funzioni
+    $("#btnStats").addEventListener("click", openStats);
+    $("#btnHistory").addEventListener("click", openHistory);
+    $("#btnPng").addEventListener("click", () => exportPNG());
+    $("#btnPath").addEventListener("click", () => { if (pathMode) exitPathMode(); else enterPathMode(); });
+    $("#modalClose").addEventListener("click", closeModal);
+    $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+    bindSearch();
+
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !$("#editor").hidden) closeEditor();
+      if (e.key === "Escape") {
+        if (!$("#modal").hidden) { closeModal(); return; }
+        if (pathMode) { exitPathMode(); return; }
+        if (!$("#editor").hidden) closeEditor();
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !$("#editor").hidden) saveCurrent(false);
     });
-    window.addEventListener("resize", applyTransform);
+    window.addEventListener("resize", () => { fixViewportTop(); applyTransform(); });
   }
 
   // ============================================================ AVVIO
@@ -850,7 +1341,9 @@
     setupPanZoom();
     loadView();
     loadLineage();
+    fixViewportTop();
     startListening();
+    window.__exportPNG = exportPNG; // usato solo per le verifiche automatiche
   }
 
   document.addEventListener("DOMContentLoaded", init);
