@@ -434,20 +434,35 @@
     const rowUnits = [];
     for (let g = 0; g <= maxGen; g++) {
       const used = new Set(), units = [];
+      // Adiacenza coniugale nella stessa generazione (per formare i "cluster di matrimoni")
+      const spAdj = {};
+      for (const id of rows[g]) spAdj[id] = spouseMap[id].filter((s) => gen[s] === g);
+      // Ordina un cluster come un cammino, così ogni coppia sposata è adiacente
+      // (es. matrimoni multipli: coniuge1 — persona — coniuge2).
+      const orderCluster = (cluster) => {
+        if (cluster.length <= 1) return cluster.slice();
+        const set = new Set(cluster);
+        const start = cluster.find((id) => spAdj[id].filter((s) => set.has(s)).length === 1) || cluster[0];
+        const seen = new Set([start]), path = [start];
+        let cur = start;
+        while (path.length < cluster.length) {
+          const nxt = spAdj[cur].find((s) => set.has(s) && !seen.has(s));
+          if (nxt) { seen.add(nxt); path.push(nxt); cur = nxt; }
+          else { const rem = cluster.find((id) => !seen.has(id)); if (!rem) break; seen.add(rem); path.push(rem); cur = rem; }
+        }
+        return path;
+      };
       for (const id of rows[g]) {
         if (used.has(id)) continue;
-        const sp = spouseMap[id].find((s) => gen[s] === g && !used.has(s));
-        let members;
-        if (sp) {
-          members = (byId[id].sex === "F" && byId[sp].sex !== "F") ? [sp, id] : [id, sp];
-          used.add(id); used.add(sp);
-        } else { members = [id]; used.add(id); }
-        // Membro "primario" = linea di sangue dominante (chi ha più fratelli
-        // nell'albero). Ancorando l'unità ai SUOI genitori, i fratelli restano
-        // vicini invece di essere trascinati via dalla famiglia del coniuge.
+        // Raccogli l'intero cluster di matrimoni (componente connessa via coniugi)
+        const cluster = []; const stack = [id]; const seen = new Set([id]);
+        while (stack.length) { const x = stack.pop(); cluster.push(x); for (const s of spAdj[x]) if (!seen.has(s)) { seen.add(s); stack.push(s); } }
+        cluster.forEach((m) => used.add(m));
+        let members = orderCluster(cluster);
+        if (members.length === 2) members = (byId[members[1]].sex !== "F" && byId[members[0]].sex === "F") ? members : (byId[members[0]].sex === "F" && byId[members[1]].sex !== "F" ? [members[1], members[0]] : members);
         const birthSize = (idm) => (childFam[idm] ? childFam[idm].children.filter((c) => byId[c]).length : 0);
         let primary = members[0];
-        if (members.length === 2 && birthSize(members[1]) > birthSize(members[0])) primary = members[1];
+        for (const m of members) if (birthSize(m) > birthSize(primary)) primary = m;
         const u = { members, g, primary };
         units.push(u); members.forEach((m) => (unitOf[m] = u));
       }
@@ -473,7 +488,7 @@
     }
 
     // --- 4) Coordinate X ---
-    const unitWidth = (u) => (u.members.length === 2 ? CARD_W * 2 + COUPLE_GAP : CARD_W);
+    const unitWidth = (u) => u.members.length * CARD_W + (u.members.length - 1) * COUPLE_GAP;
     const unitCenter = (u) => u._x + unitWidth(u) / 2;
     for (let g = 0; g <= maxGen; g++) { let x = 0; for (const u of rowUnits[g]) { u._x = x; x += unitWidth(u) + H_GAP; } }
 
@@ -611,17 +626,27 @@
       const kids = fam.children.filter((c) => pos[c]);
       if (!parents.length || !kids.length && parents.length < 2) continue;
       let midX, bottomY;
+      const childCentersAll = kids.length ? kids.map((c) => pos[c].x + CARD_W / 2) : [];
+      const childMean = childCentersAll.length ? childCentersAll.reduce((a, b) => a + b, 0) / childCentersAll.length : null;
       if (parents.length === 2 && Math.abs(pos[parents[0]].y - pos[parents[1]].y) < 4) {
         const a = pos[parents[0]], b = pos[parents[1]];
         const lp = a.x < b.x ? a : b, rp = a.x < b.x ? b : a;
-        segs.push({ x1: lp.x + CARD_W, y1: lp.y + CARD_H / 2, x2: rp.x, y2: rp.y + CARD_H / 2 });
-        midX = (lp.x + CARD_W + rp.x) / 2; bottomY = lp.y + CARD_H;
+        const adjacent = rp.x - (lp.x + CARD_W) < 60; // coniugi affiancati (coppia normale)
+        if (adjacent) {
+          segs.push({ x1: lp.x + CARD_W, y1: lp.y + CARD_H / 2, x2: rp.x, y2: rp.y + CARD_H / 2 });
+          midX = (lp.x + CARD_W + rp.x) / 2; bottomY = lp.y + CARD_H;
+        } else {
+          // Coppia "spezzata" (es. matrimonio multiplo): niente linea orizzontale lunga.
+          // Aggancio i figli al genitore più vicino a loro.
+          const pick = childMean == null ? a : [a, b].reduce((u, v) => Math.abs((v.x + CARD_W / 2) - childMean) < Math.abs((u.x + CARD_W / 2) - childMean) ? v : u);
+          midX = pick.x + CARD_W / 2; bottomY = pick.y + CARD_H;
+        }
       } else {
         midX = pos[parents[0]].x + CARD_W / 2; bottomY = pos[parents[0]].y + CARD_H;
       }
       if (!kids.length) continue;
       const childTop = Math.min(...kids.map((c) => pos[c].y));
-      const centers = kids.map((c) => pos[c].x + CARD_W / 2);
+      const centers = childCentersAll;
       buses.push({ kids, midX, bottomY, childTop, x1: Math.min(midX, ...centers), x2: Math.max(midX, ...centers) });
     }
 
