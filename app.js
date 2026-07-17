@@ -271,7 +271,23 @@
     const vis = new Set([viewState.focusId]);
     const up = viewState.mode === "descendants" ? 0 : viewState.mode === "ancestors" ? 99 : viewState.upGens;
     const down = viewState.mode === "ancestors" ? 0 : viewState.mode === "descendants" ? 99 : viewState.downGens;
-    const climb = (id, b) => { if (viewState.colUp[id]) return; if (!(b > 0 || viewState.expUp[id])) return; for (const p of g.parent[id]) { vis.add(p); climb(p, b - 1); } };
+    // Biforcazione ascendente: da una coppia si prosegue verso l'alto UNA linea sola
+    // (di default il marito → patrilineare). Espandere un coniuge (expUp) fa da
+    // interruttore: si segue la SUA linea e si nasconde quella del partner. Così le due
+    // dinastie di nonni non si scontrano mai e c'è sempre una sola linea per biforcazione.
+    const chooseSide = (parents) => {
+      const expd = parents.find((p) => viewState.expUp[p]);
+      if (expd) return expd;
+      const withAnc = parents.filter((p) => g.parent[p].length);
+      return withAnc.find((p) => g.byId[p] && g.byId[p].sex === "M") || withAnc[0] || parents[0];
+    };
+    const climb = (id, b) => {
+      if (viewState.colUp[id]) return;
+      if (!(b > 0 || viewState.expUp[id])) return;
+      const parents = g.parent[id];
+      for (const p of parents) vis.add(p);              // mostra sempre la coppia dei genitori
+      if (parents.length) climb(chooseSide(parents), b - 1); // ...ma sali una linea sola
+    };
     const descend = (id, b) => { if (viewState.colDown[id]) return; if (!(b > 0 || viewState.expDown[id])) return; for (const c of g.child[id]) { vis.add(c); descend(c, b - 1); } };
     climb(viewState.focusId, up); descend(viewState.focusId, down);
     // coniugi + espansioni per-nodo, fino a stabilità
@@ -321,11 +337,25 @@
     else if (viewState.focusId) setTimeout(() => centerOnPerson(viewState.focusId, true), 30);
     updateViewChrome();
   }
+  function isAncestorOfFocus(id, g) {
+    const seen = new Set(); const st = [...g.parent[viewState.focusId]];
+    while (st.length) { const x = st.pop(); if (x === id) return true; if (seen.has(x)) continue; seen.add(x); for (const p of g.parent[x]) st.push(p); }
+    return false;
+  }
   function toggleBranch(id, dir) {
-    // La freccia compare solo sulla frontiera (espandi) o su ciò che è stato espanso
-    // (comprimi): un semplice toggle dell'espansione copre entrambi i casi.
     const exp = dir === "up" ? viewState.expUp : viewState.expDown;
-    if (exp[id]) delete exp[id]; else exp[id] = true;
+    if (exp[id]) {
+      delete exp[id]; // torna alla linea di default (marito)
+    } else {
+      const g = buildGraph();
+      // Se allargo l'ascendenza di qualcuno che NON è un antenato del focus (es. il
+      // coniuge di un discendente), la sua dinastia si scontrerebbe con la famiglia del
+      // focus: allora ri-centro su di lui, così vedo la SUA genealogia senza incroci.
+      if (dir === "up" && id !== viewState.focusId && !isAncestorOfFocus(id, g)) { setFocus(id); return; }
+      exp[id] = true;
+      // Interruttore: seguendo la MIA linea, smetto di seguire quella del coniuge.
+      if (dir === "up") for (const s of g.spouse[id]) delete viewState.expUp[s];
+    }
     saveViewState(); render(true);
   }
   // Persona di default: chi ha SIA genitori SIA figli nell'albero (una generazione
