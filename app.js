@@ -572,8 +572,11 @@
       for (const u of rowUnits[g]) { let x = u._x; for (const m of u.members) { pos[m] = { x, y }; x += CARD_W + COUPLE_GAP; } }
     }
 
-    // In una coppia, metti ogni membro dal lato dei propri genitori: evita che i
-    // due connettori verso le rispettive famiglie si incrocino.
+    // In una coppia, metti il "figlio di sangue" dal lato dei propri genitori (verso
+    // l'interno, cioè verso i fratelli). Così due coppie di fratelli finiscono coi
+    // fratelli ADIACENTI al centro e i coniugi all'esterno: il binario genitore→figli
+    // resta corto e non passa più sopra i coniugi in mezzo (come MyHeritage).
+    // Vale anche se solo UNO dei due coniugi ha i genitori visibili.
     const parentCenterX = (m) => {
       const a = [];
       for (const p of parentMap[m]) if (pos[p] && gen[p] === gen[m] - 1) a.push(pos[p].x + CARD_W / 2);
@@ -583,10 +586,14 @@
       if (u.members.length !== 2) continue;
       const [a, b] = u.members;
       const pa = parentCenterX(a), pb = parentCenterX(b);
-      if (pa == null || pb == null) continue;
+      if (pa == null && pb == null) continue;
       const aLeft = pos[a].x < pos[b].x;
-      const leftP = aLeft ? pa : pb, rightP = aLeft ? pb : pa;
-      if (leftP > rightP + 1) { const t = pos[a].x; pos[a].x = pos[b].x; pos[b].x = t; }
+      const mid = (pos[a].x + pos[b].x) / 2 + CARD_W / 2;
+      let wantALeft;
+      if (pa != null && pb != null) wantALeft = pa <= pb;         // ciascuno verso il proprio genitore
+      else if (pa != null) wantALeft = pa <= mid;                 // solo a ha genitori: va verso di loro
+      else wantALeft = pb > mid;                                  // solo b ha genitori: b verso i suoi
+      if (wantALeft !== aLeft) { const t = pos[a].x; pos[a].x = pos[b].x; pos[b].x = t; }
     }
 
     // Normalizza origine
