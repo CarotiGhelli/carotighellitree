@@ -115,8 +115,8 @@
         updatedBy: who,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       })
-        .then(() => showToast("Salvato ✓"))
-        .catch((e) => { console.warn("Firestore save failed", e); showToast("Errore salvataggio"); });
+        .then(() => { saveTimer = null; showToast("Salvato ✓"); })
+        .catch((e) => { saveTimer = null; console.warn("Firestore save failed", e); showToast("Errore salvataggio"); });
     }, 1200);
   }
 
