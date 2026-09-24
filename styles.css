@@ -62,7 +62,12 @@ html, body {
   padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
   backdrop-filter: blur(4px);
   animation: fadeIn .2s ease;
+  display: flex; align-items: center; gap: 10px; max-width: min(420px, calc(100vw - 32px));
 }
+.sync-status.conflict {
+  background: rgba(226,87,76,.95);
+}
+.sync-status.conflict .btn { background: #fff; color: var(--danger); border: none; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ---------- Viewport / world ---------- */

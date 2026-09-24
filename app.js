@@ -15,6 +15,7 @@
   let saveTimer = null;
   let tempPhoto = null;
   let historyLog = []; // cronologia modifiche (specchiata su Firestore nel documento principale)
+  let lastKnownRev = 0; // ultima versione del documento vista da questo dispositivo (rilevamento conflitti)
 
   const CARD_W = 160, CARD_H = 64;
   const H_GAP = 26, COUPLE_GAP = 26, V_GAP = 116, TREE_GAP = 80;
@@ -43,8 +44,28 @@
   }
   function showToast(msg, ms = 3000) {
     const el = $("#syncStatus");
+    el.classList.remove("conflict");
     el.textContent = msg; el.hidden = false;
     clearTimeout(el._t); el._t = setTimeout(() => { el.hidden = true; }, ms);
+  }
+
+  // Avviso persistente (non si chiude da solo): le ultime modifiche NON sono state
+  // salvate perché qualcun altro ha scritto nel frattempo. Non sovrascriviamo mai in
+  // automatico: l'utente deve ricaricare consapevolmente per vedere le ultime modifiche.
+  function showConflictBanner() {
+    const el = $("#syncStatus");
+    clearTimeout(el._t);
+    el.classList.add("conflict");
+    el.hidden = false;
+    el.innerHTML = "";
+    const span = document.createElement("span");
+    span.textContent = "⚠️ Le tue ultime modifiche non sono state salvate: qualcun altro ha modificato l'albero nel frattempo. ";
+    const btn = document.createElement("button");
+    btn.className = "btn btn-sm";
+    btn.textContent = "Ricarica";
+    btn.addEventListener("click", () => location.reload());
+    el.appendChild(span);
+    el.appendChild(btn);
   }
 
   // ============================================================ PIN DI FAMIGLIA (protezione scrittura)
@@ -105,18 +126,44 @@
     showToast("Salvando…", 60000);
     saveTimer = setTimeout(() => {
       const who = getUserName();
-      historyLog.push({ t: Date.now(), who, a: label || "Modifica" });
-      if (historyLog.length > 100) historyLog = historyLog.slice(-100);
-      window.db.collection("trees").doc("main").set({
-        persons: state.persons,
-        families: state.families,
-        seq,
-        history: historyLog,
-        updatedBy: who,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      })
-        .then(() => { saveTimer = null; showToast("Salvato ✓"); })
-        .catch((e) => { saveTimer = null; console.warn("Firestore save failed", e); showToast("Errore salvataggio"); });
+      const what = label || "Modifica";
+      const docRef = window.db.collection("trees").doc("main");
+      // Transazione: legge la versione (rev) attuale sul server e scrive solo se
+      // combacia con l'ultima versione vista da questo dispositivo. Se nel frattempo
+      // un altro dispositivo ha già salvato, NON sovrascriviamo silenziosamente:
+      // annulliamo e avvisiamo l'utente (vedi showConflictBanner).
+      window.db.runTransaction((tx) => tx.get(docRef).then((snap) => {
+        const serverData = snap.exists ? snap.data() : null;
+        const serverRev = serverData && typeof serverData.rev === "number" ? serverData.rev : 0;
+        if (serverRev !== lastKnownRev) {
+          const err = new Error("Conflitto: il documento è stato modificato da un altro dispositivo.");
+          err.isConflict = true;
+          throw err;
+        }
+        const newRev = serverRev + 1;
+        const newHistory = historyLog.concat([{ t: Date.now(), who, a: what }]).slice(-100);
+        tx.set(docRef, {
+          persons: state.persons,
+          families: state.families,
+          seq,
+          history: newHistory,
+          rev: newRev,
+          updatedBy: who,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        return { newRev, newHistory };
+      }))
+        .then(({ newRev, newHistory }) => {
+          lastKnownRev = newRev;
+          historyLog = newHistory;
+          saveTimer = null;
+          showToast("Salvato ✓");
+        })
+        .catch((e) => {
+          saveTimer = null;
+          if (e && e.isConflict) { console.warn(e.message); showConflictBanner(); }
+          else { console.warn("Firestore save failed", e); showToast("Errore salvataggio"); }
+        });
     }, 1200);
   }
 
@@ -141,6 +188,7 @@
           state = { persons: data.persons || [], families: data.families || [] };
           seq = data.seq || 1;
           historyLog = Array.isArray(data.history) ? data.history : [];
+          lastKnownRev = typeof data.rev === "number" ? data.rev : 0;
           render();
         }
       },
