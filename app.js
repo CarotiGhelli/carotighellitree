@@ -178,6 +178,25 @@
     try { return structuredClone(x); } catch (_) { return JSON.parse(JSON.stringify(x)); }
   }
 
+  // Un documento Firestore può pesare al massimo 1 MB: oltre quella soglia i salvataggi
+  // iniziano a fallire (a volte senza un messaggio chiaro). Da quando le foto sono su
+  // Storage il rischio è basso, ma testo e cronologia crescendo nel tempo potrebbero
+  // comunque avvicinarsi al limite: avvisiamo per tempo, prima che diventi un problema.
+  const SIZE_WARN_BYTES = 800 * 1024; // 80% del limite di 1 MB
+  let sizeWarningShownAt = 0;
+  function warnIfNearSizeLimit(persons, families) {
+    try {
+      const bytes = new Blob([JSON.stringify({ persons, families })]).size;
+      if (bytes < SIZE_WARN_BYTES) return;
+      // Non ripetere l'avviso più di una volta ogni 10 minuti (i salvataggi sono frequenti)
+      if (Date.now() - sizeWarningShownAt < 10 * 60 * 1000) return;
+      sizeWarningShownAt = Date.now();
+      const mb = (bytes / (1024 * 1024)).toFixed(2);
+      console.warn(`Documento vicino al limite Firestore: ${mb} MB su 1 MB`);
+      alert(`Attenzione: l'albero occupa circa ${mb} MB su un limite di 1 MB per il salvataggio. Continuando a crescere, i salvataggi potrebbero iniziare a fallire. Contatta chi gestisce il sito.`);
+    } catch (_) { /* stima best-effort, non deve mai bloccare il salvataggio */ }
+  }
+
   function save(label) {
     if (!window.db) return;
     clearTimeout(saveTimer);
@@ -187,6 +206,7 @@
       const what = label || "Modifica";
       const persons = deepClone(state.persons);
       const families = deepClone(state.families);
+      warnIfNearSizeLimit(persons, families);
       const docRef = window.db.collection("trees").doc("main");
       // Transazione: legge la versione (rev) attuale sul server e scrive solo se
       // combacia con l'ultima versione vista da questo dispositivo. Se nel frattempo
@@ -338,6 +358,27 @@
       img.onerror = () => resolve(dataUrl);
       img.src = dataUrl;
     });
+  }
+
+  // Le foto NON vengono più salvate dentro al documento Firestore (un documento può
+  // pesare al massimo 1 MB: con ~30-40 foto i salvataggi comincerebbero a fallire).
+  // Vengono caricate su Firebase Storage; nel documento resta solo l'URL (poche decine
+  // di byte). Un nome file diverso ad ogni caricamento evita che la cache del browser
+  // mostri per un attimo la foto precedente dopo una sostituzione.
+  function uploadPhoto(personId, dataUrl) {
+    if (!window.storage) return Promise.reject(new Error("Firebase Storage non disponibile"));
+    const path = `photos/${personId}-${Date.now()}.jpg`;
+    return window.storage.ref(path).putString(dataUrl, "data_url", { contentType: "image/jpeg" })
+      .then((snap) => snap.ref.getDownloadURL());
+  }
+
+  // Cancellazione della foto da Storage: solo "best effort", non deve mai bloccare né
+  // far fallire il salvataggio principale (già andato a buon fine quando viene chiamata).
+  function deletePhotoBestEffort(url) {
+    if (!url || !window.storage) return;
+    try {
+      window.storage.refFromURL(url).delete().catch((e) => console.warn("Rimozione foto da Storage fallita (non bloccante)", e));
+    } catch (e) { console.warn("Rimozione foto da Storage fallita (non bloccante)", e); }
   }
 
   // ============================================================ RAMI COMPRESSI
@@ -1267,6 +1308,7 @@
   function saveCurrent(silent) {
     const p = findPerson(editingId); if (!p) return;
     if (!ensureCanEdit()) return;
+    const oldPhoto = p.photo || "";
     p.first = $("#fFirst").value.trim(); p.last = $("#fLast").value.trim();
     p.sex = $("#fSex").value;
     p.birth = $("#fBirth").value.trim(); p.birthPlace = $("#fBirthPlace").value.trim();
@@ -1274,6 +1316,10 @@
     p.deceased = !!(p.death || p.deathPlace);
     p.notes = $("#fNotes").value; p.photo = tempPhoto || "";
     save(`Modificata la scheda di ${fullName(p)}`); render();
+    // La vecchia foto (se sostituita o rimossa) va cancellata da Storage SOLO ora che il
+    // salvataggio è stato avviato: se ci pensassimo al clic su "Rimuovi", chiudendo
+    // l'editor senza salvare perderemmo comunque il file mentre la scheda punta ancora ad esso.
+    if (oldPhoto && oldPhoto !== p.photo) deletePhotoBestEffort(oldPhoto);
     if (!silent) closeEditor();
   }
 
@@ -1340,7 +1386,9 @@
 
   function deletePerson(id) {
     if (!ensureCanEdit()) return;
-    const name = fullName(findPerson(id) || {});
+    const removed = findPerson(id) || {};
+    const name = fullName(removed);
+    if (removed.photo) deletePhotoBestEffort(removed.photo);
     state.persons = state.persons.filter((p) => p.id !== id);
     for (const f of state.families) {
       if (f.husb === id) f.husb = null; if (f.wife === id) f.wife = null;
@@ -1685,6 +1733,7 @@
     const preview = names.slice(0, 8).join(", ") + (names.length > 8 ? `, … (+${names.length - 8})` : "");
     if (!confirm(`Eliminare definitivamente ${ids.length} person${ids.length === 1 ? "a" : "e"}?\n\n${preview}\n\nL'operazione non è reversibile (fai prima un Backup se non sei sicuro).`)) return;
     const idset = new Set(ids);
+    state.persons.filter((p) => idset.has(p.id) && p.photo).forEach((p) => deletePhotoBestEffort(p.photo));
     state.persons = state.persons.filter((p) => !idset.has(p.id));
     for (const f of state.families) {
       if (idset.has(f.husb)) f.husb = null;
@@ -1794,12 +1843,15 @@
     ctx.strokeStyle = "#9aa7b2"; ctx.lineWidth = 2; ctx.lineCap = "round";
     for (const s of layout.segs || []) { ctx.beginPath(); ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2); ctx.stroke(); }
 
-    // pre-carica le foto
+    // pre-carica le foto (ora su Firebase Storage, quindi "cross-origin": serve
+    // crossOrigin="anonymous" perché il canvas possa poi essere esportato in PNG)
     const imgs = {};
+    let photoLoadFailed = false;
     await Promise.all(state.persons.filter((p) => layout.pos[p.id] && p.photo).map((p) => new Promise((res) => {
       const im = new Image();
+      im.crossOrigin = "anonymous";
       im.onload = () => { imgs[p.id] = im; res(); };
-      im.onerror = () => res();
+      im.onerror = () => { photoLoadFailed = true; res(); };
       im.src = p.photo;
     })));
 
@@ -1846,14 +1898,25 @@
     ctx.restore();
 
     if (testOnly) return { w: W, h: H };
-    canvas.toBlob((blob) => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = "albero-genealogico.png";
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-      showToast("PNG scaricato ✓");
-    }, "image/png");
+    try {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          // Canvas "contaminato": una foto è stata caricata da Storage senza permesso
+          // CORS. Non è un bug dei dati, va configurato il CORS del bucket (vedi README).
+          showToast("Impossibile includere le foto nel PNG (CORS non configurato su Storage). Riprova senza foto o configura il CORS.", 6000);
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "albero-genealogico.png";
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        showToast(photoLoadFailed ? "PNG scaricato ✓ (qualche foto non è stata caricata)" : "PNG scaricato ✓");
+      }, "image/png");
+    } catch (e) {
+      console.warn("Esportazione PNG fallita (probabile canvas contaminato da CORS)", e);
+      showToast("Impossibile esportare il PNG con le foto (CORS non configurato su Storage).", 6000);
+    }
     return null;
   }
 
@@ -1882,8 +1945,22 @@
     $("#relAddParents").addEventListener("click", () => { saveCurrent(true); addParents(editingId); openEditor(editingId); });
     $("#photoInput").addEventListener("change", (e) => {
       const file = e.target.files[0]; if (!file) return;
+      const personId = editingId; // per verificare, al termine, che l'editor sia ancora sulla stessa persona
       const reader = new FileReader();
-      reader.onload = async () => { tempPhoto = await compressPhoto(reader.result); updatePhotoPreview(); };
+      reader.onload = async () => {
+        const el = $("#photoPreview");
+        el.style.backgroundImage = ""; el.textContent = "⏳";
+        try {
+          const compressed = await compressPhoto(reader.result);
+          const url = await uploadPhoto(personId, compressed);
+          if (editingId !== personId) return; // l'editor è stato chiuso/cambiato nel frattempo
+          tempPhoto = url; updatePhotoPreview();
+        } catch (err) {
+          console.warn("Caricamento foto fallito", err);
+          if (editingId === personId) updatePhotoPreview();
+          alert("Impossibile caricare la foto (verifica la connessione). La persona verrà salvata senza foto.");
+        }
+      };
       reader.readAsDataURL(file); e.target.value = "";
     });
     $("#photoRemove").addEventListener("click", () => { tempPhoto = null; updatePhotoPreview(); });

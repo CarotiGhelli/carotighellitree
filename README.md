@@ -33,11 +33,20 @@ tempo reale su tutti i dispositivi. Ad ogni salvataggio viene tenuta anche una c
 sicurezza (fino alle ultime 20 versioni, recuperabili da **Cronologia** 🕐 → **Ripristina**).
 Per un backup indipendente dal database usa comunque **Esporta GEDCOM** o **Backup**.
 
+Le **foto** sono su Firebase Storage (non dentro al documento principale, che ha un limite
+di 1 MB): l'app avvisa se l'albero si avvicina comunque a quel limite. Perché **Esporta
+PNG** includa le foto serve configurare il CORS del bucket Storage (una sola volta, da
+riga di comando, con `gsutil cors set` — chiedi assistenza se serve); senza CORS l'export
+funziona comunque, semplicemente senza le foto.
+
 ## File
 - `index.html` — struttura della pagina
 - `styles.css` — stile
 - `gedcom.js` — lettura/scrittura GEDCOM 5.5.1
 - `app.js` — modello dati, layout dell'albero, editor, salvataggio
+- `firebase-config.js` — configurazione del progetto Firebase (Firestore, Auth, Storage)
+- `firestore.rules` / `storage.rules` — regole di accesso: da incollare manualmente nella
+  Firebase Console quando cambiano (vedi i commenti in cima ad ogni file)
 
 ## Note sul layout
 - Carte **azzurre = maschi**, **rosa = femmine**; il puntino verde indica chi è in vita.
