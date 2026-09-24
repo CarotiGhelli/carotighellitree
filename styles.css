@@ -67,6 +67,14 @@ html, body {
 .auth-who { font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; }
 .auth-who.auth-unauthorized { color: var(--danger); }
 
+/* Banner "modalità test" (?db=test) */
+.test-banner {
+  position: relative; z-index: 19;
+  background: #fff3cd; color: #7a5b00; border-bottom: 1px solid #f0d68a;
+  text-align: center; font-size: 12.5px; font-weight: 700;
+  padding: 6px 10px;
+}
+
 /* Indicatore sync */
 .sync-status {
   position: fixed; bottom: 16px; right: 16px; z-index: 30;
@@ -252,6 +260,7 @@ html, body {
 }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
+.field-hint { color: #a06a00; font-size: 11px; }
 .relations { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; margin-top: 6px; }
 .relations legend { font-size: 12px; font-weight: 700; color: var(--muted); padding: 0 6px; }
 .rel-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
@@ -263,6 +272,16 @@ html, body {
 }
 .rel-item .rel-kind { color: var(--muted); font-size: 11px; }
 .rel-item button { border: none; background: none; color: var(--danger); cursor: pointer; font-size: 13px; }
+
+/* Riga coniuge: nome + azioni sopra, data/luogo matrimonio sotto (se presenti) */
+.rel-item-spouse { flex-direction: column; align-items: stretch; gap: 4px; }
+.rel-item-top { display: flex; align-items: center; justify-content: space-between; }
+.rel-item-top button.rel-link-btn { color: var(--accent); margin-right: 10px; }
+.rel-marriage { font-size: 12px; color: var(--muted); padding-left: 2px; }
+.rel-marriage-edit { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.rel-marriage-edit input {
+  flex: 1; min-width: 120px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12.5px;
+}
 
 /* ---------- Hints ---------- */
 .empty-hint {

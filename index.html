@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Albero Genealogico — Caroti Ghelli</title>
-  <link rel="stylesheet" href="styles.css?v=17" />
+  <link rel="stylesheet" href="styles.css?v=19" />
 </head>
 <body>
 
@@ -72,6 +72,8 @@
       <div id="authArea" class="auth-area" title="Per modificare l'albero serve accedere con un account Google autorizzato"></div>
     </div>
   </header>
+
+  <div id="testBanner" class="test-banner" hidden>🧪 MODALITÀ TEST — stai lavorando su dati di prova (trees/test), non sull'albero vero</div>
 
   <div id="syncStatus" class="sync-status" hidden></div>
 
@@ -145,6 +147,7 @@
         <label class="field">
           <span>Data di nascita</span>
           <input type="text" id="fBirth" placeholder="es. 12 MAR 1950" />
+          <small id="fBirthHint" class="field-hint" hidden>Formato data non riconosciuto: età e compleanni potrebbero non calcolarsi.</small>
         </label>
         <label class="field">
           <span>Luogo di nascita</span>
@@ -155,6 +158,7 @@
         <label class="field">
           <span>Data di morte</span>
           <input type="text" id="fDeath" placeholder="(vuoto se in vita)" />
+          <small id="fDeathHint" class="field-hint" hidden>Formato data non riconosciuto: età potrebbe non calcolarsi.</small>
         </label>
         <label class="field">
           <span>Luogo di morte</span>
@@ -188,7 +192,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
 
   <script src="firebase-config.js"></script>
-  <script src="gedcom.js?v=17"></script>
-  <script src="app.js?v=17"></script>
+  <script src="gedcom.js?v=19"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>

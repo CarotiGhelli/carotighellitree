@@ -6,6 +6,10 @@
   "use strict";
 
   // ============================================================ STATO
+  // Aggiungendo ?db=test all'URL (es. http://localhost:8000/?db=test) si lavora su un
+  // documento Firestore separato (trees/test) invece che su quello vero (trees/main):
+  // utile per testare senza rischiare i dati reali. Un banner in alto lo ricorda sempre.
+  const TREE_DOC_ID = new URLSearchParams(location.search).get("db") === "test" ? "test" : "main";
   const VIEW_KEY = "albero-view-v1";
   let state = { persons: [], families: [] };
   let seq = 1;
@@ -166,6 +170,15 @@
     const a = end - by;
     return (a >= 0 && a < 130) ? a : null;
   }
+  // Solo un avviso "morbido" nell'editor: il campo resta testo libero (compatibile con
+  // GEDCOM e con date incerte tipo "verso il 1920"), ma se non troviamo un anno
+  // plausibile età e compleanni non si potranno calcolare, quindi lo segnaliamo.
+  function looksLikeValidDate(s) {
+    s = String(s || "").trim();
+    if (!s) return true;
+    const y = yearOf(s);
+    return y != null && y >= 1000 && y <= 2100;
+  }
 
   // ============================================================ PERSISTENZA
   function saveView() { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) {} }
@@ -207,7 +220,7 @@
       const persons = deepClone(state.persons);
       const families = deepClone(state.families);
       warnIfNearSizeLimit(persons, families);
-      const docRef = window.db.collection("trees").doc("main");
+      const docRef = window.db.collection("trees").doc(TREE_DOC_ID);
       // Transazione: legge la versione (rev) attuale sul server e scrive solo se
       // combacia con l'ultima versione vista da questo dispositivo. Se nel frattempo
       // un altro dispositivo ha già salvato, NON sovrascriviamo silenziosamente:
@@ -255,7 +268,7 @@
   // crescere il database all'infinito. Serve per recuperare dati persi (bug, errori,
   // "Svuota" per sbaglio) anche senza un backup JSON manuale.
   const MAX_VERSIONS = 20;
-  function versionsCollection() { return window.db.collection("trees").doc("main").collection("versions"); }
+  function versionsCollection() { return window.db.collection("trees").doc(TREE_DOC_ID).collection("versions"); }
 
   function saveVersionSnapshot(rev, snapshot, who, what) {
     if (!window.db) return;
@@ -313,7 +326,7 @@
   let seededOnce = false;
   function startListening() {
     if (unsubscribeSnapshot) unsubscribeSnapshot();
-    unsubscribeSnapshot = window.db.collection("trees").doc("main").onSnapshot(
+    unsubscribeSnapshot = window.db.collection("trees").doc(TREE_DOC_ID).onSnapshot(
       (snap) => {
         // IMPORTANTISSIMO: non agire mai su dati provenienti dalla cache offline.
         // Una lettura offline può sembrare "vuota" e causare una sovrascrittura.
@@ -367,7 +380,8 @@
   // mostri per un attimo la foto precedente dopo una sostituzione.
   function uploadPhoto(personId, dataUrl) {
     if (!window.storage) return Promise.reject(new Error("Firebase Storage non disponibile"));
-    const path = `photos/${personId}-${Date.now()}.jpg`;
+    const folder = TREE_DOC_ID === "test" ? "photos-test" : "photos";
+    const path = `${folder}/${personId}-${Date.now()}.jpg`;
     return window.storage.ref(path).putString(dataUrl, "data_url", { contentType: "image/jpeg" })
       .then((snap) => snap.ref.getDownloadURL());
   }
@@ -1269,6 +1283,8 @@
     $("#fBirth").value = p.birth || ""; $("#fBirthPlace").value = p.birthPlace || "";
     $("#fDeath").value = p.death || ""; $("#fDeathPlace").value = p.deathPlace || "";
     $("#fNotes").value = p.notes || "";
+    $("#fBirthHint").hidden = looksLikeValidDate(p.birth);
+    $("#fDeathHint").hidden = looksLikeValidDate(p.death);
     updatePhotoPreview(); renderRelations(p);
     $("#overlay").hidden = false; $("#editor").hidden = false;
   }
@@ -1279,6 +1295,13 @@
     const el = $("#photoPreview");
     if (tempPhoto) { el.style.backgroundImage = `url('${tempPhoto}')`; el.textContent = ""; }
     else { el.style.backgroundImage = ""; el.textContent = "👤"; }
+  }
+
+  // Testo compatto per data/luogo di matrimonio, es. "💍 12 GIU 1980 · Firenze"
+  function formatMarriage(f) {
+    const d = (f.marriageDate || "").trim(), pl = (f.marriagePlace || "").trim();
+    if (!d && !pl) return "";
+    return `💍 ${d}${d && pl ? " · " : ""}${pl}`;
   }
 
   function renderRelations(p) {
@@ -1293,6 +1316,41 @@
       if (other) { row.firstChild.style.cursor = "pointer"; row.firstChild.addEventListener("click", () => { saveCurrent(true); openEditor(other.id); }); }
       list.appendChild(row);
     };
+    // Riga coniuge: come addRow, ma con data/luogo di matrimonio modificabili inline
+    // (servono anche per gli anniversari, vedi statistiche future).
+    const addSpouseRow = (f, otherId) => {
+      const other = findPerson(otherId);
+      const row = document.createElement("div"); row.className = "rel-item rel-item-spouse";
+      const marr = formatMarriage(f);
+      const top = document.createElement("div"); top.className = "rel-item-top";
+      const nameSpan = document.createElement("span");
+      nameSpan.innerHTML = `<strong>${escapeHtml(fullName(other || {}))}</strong> <span class="rel-kind">coniuge</span>`;
+      if (other) { nameSpan.style.cursor = "pointer"; nameSpan.addEventListener("click", () => { saveCurrent(true); openEditor(other.id); }); }
+      const btnGroup = document.createElement("span");
+      const marrBtn = document.createElement("button"); marrBtn.className = "rel-link-btn"; marrBtn.textContent = marr ? "✎ matrimonio" : "+ matrimonio";
+      const unlinkBtn = document.createElement("button"); unlinkBtn.textContent = "Scollega";
+      unlinkBtn.addEventListener("click", () => { unlinkSpouse(f.id, p.id); openEditor(p.id); });
+      btnGroup.appendChild(marrBtn); btnGroup.appendChild(unlinkBtn);
+      top.appendChild(nameSpan); top.appendChild(btnGroup);
+      row.appendChild(top);
+      if (marr) { const info = document.createElement("div"); info.className = "rel-marriage"; info.textContent = marr; row.appendChild(info); }
+      const editBox = document.createElement("div"); editBox.className = "rel-marriage-edit"; editBox.hidden = true;
+      editBox.innerHTML = `
+        <input type="text" class="mDate" placeholder="Data matrimonio (es. 12 GIU 1980)" value="${escapeHtml(f.marriageDate || "")}" />
+        <input type="text" class="mPlace" placeholder="Luogo" value="${escapeHtml(f.marriagePlace || "")}" />
+        <button class="btn btn-sm mSave" type="button">Salva</button>
+      `;
+      row.appendChild(editBox);
+      marrBtn.addEventListener("click", () => { editBox.hidden = !editBox.hidden; });
+      editBox.querySelector(".mSave").addEventListener("click", () => {
+        if (!ensureCanEdit()) return;
+        f.marriageDate = editBox.querySelector(".mDate").value.trim();
+        f.marriagePlace = editBox.querySelector(".mPlace").value.trim();
+        save(`Aggiornato matrimonio: ${fullName(p)} e ${fullName(other || {})}`);
+        renderRelations(p);
+      });
+      list.appendChild(row);
+    };
     const cf = familyAsChild(p.id);
     if (cf) {
       if (cf.husb) addRow(fullName(findPerson(cf.husb) || {}), "padre", cf.husb, () => removeChildFromFamily(cf.id, p.id));
@@ -1300,7 +1358,7 @@
     }
     for (const f of familiesAsSpouse(p.id)) {
       const sp = partnerOf(f.id, p.id);
-      if (sp) addRow(fullName(findPerson(sp) || {}), "coniuge", sp, () => unlinkSpouse(f.id, p.id));
+      if (sp) addSpouseRow(f, sp);
       for (const c of f.children) addRow(fullName(findPerson(c) || {}), "figlio/a", c, () => removeChildFromFamily(f.id, c));
     }
   }
@@ -1921,9 +1979,12 @@
   }
 
   // La toolbar può andare su più righe (mobile): tieni l'albero subito sotto
+  // (più l'eventuale banner "modalità test", se presente)
   function fixViewportTop() {
     const tb = document.querySelector(".toolbar");
-    if (tb) viewportEl.style.top = tb.offsetHeight + "px";
+    const banner = document.getElementById("testBanner");
+    const bannerH = banner && !banner.hidden ? banner.offsetHeight : 0;
+    if (tb) viewportEl.style.top = (tb.offsetHeight + bannerH) + "px";
   }
 
   // ============================================================ EVENTI UI
@@ -1946,6 +2007,8 @@
     $("#editorClose").addEventListener("click", closeEditor);
     $("#overlay").addEventListener("click", closeEditor);
     $("#btnSave").addEventListener("click", () => saveCurrent(false));
+    $("#fBirth").addEventListener("input", (e) => { $("#fBirthHint").hidden = looksLikeValidDate(e.target.value); });
+    $("#fDeath").addEventListener("input", (e) => { $("#fDeathHint").hidden = looksLikeValidDate(e.target.value); });
     $("#btnDelete").addEventListener("click", () => {
       const p = findPerson(editingId);
       if (p && confirm(`Eliminare definitivamente "${fullName(p)}"?`)) { deletePerson(editingId); closeEditor(); }
@@ -2048,6 +2111,7 @@
 
   // ============================================================ AVVIO
   function init() {
+    if (TREE_DOC_ID === "test") { const b = $("#testBanner"); if (b) b.hidden = false; document.title = "🧪 TEST — " + document.title; }
     bindUI();
     setupPanZoom();
     loadView();

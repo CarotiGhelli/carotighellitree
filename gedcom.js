@@ -115,11 +115,14 @@
         const children = rec.children
           .filter((c) => c.tag === "CHIL")
           .map((c) => c.value.replace(/@/g, "").trim());
+        const marr = parseEvent(rec, "MARR");
         families.push({
           id: (rec.xref || "").replace(/@/g, "") || ("F" + (families.length + 1)),
           husb: husb || null,
           wife: wife || null,
           children,
+          marriageDate: marr.date,
+          marriagePlace: marr.place,
         });
       }
     }
@@ -167,6 +170,11 @@
       out.push(`0 @${f.id}@ FAM`);
       if (f.husb) out.push(`1 HUSB @${f.husb}@`);
       if (f.wife) out.push(`1 WIFE @${f.wife}@`);
+      if (f.marriageDate || f.marriagePlace) {
+        out.push("1 MARR");
+        if (f.marriageDate) out.push(`2 DATE ${esc(f.marriageDate)}`);
+        if (f.marriagePlace) out.push(`2 PLAC ${esc(f.marriagePlace)}`);
+      }
       for (const c of f.children) out.push(`1 CHIL @${c}@`);
     }
 

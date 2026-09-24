@@ -1,10 +1,16 @@
 # Albero Genealogico — Caroti Ghelli
 
-App web (HTML + CSS + JavaScript puri, **nessuna dipendenza, nessun server**) per creare,
-modificare e visualizzare il tuo albero genealogico, con import/export **GEDCOM**.
+App web (HTML + CSS + JavaScript puri, **nessun framework, nessun build step**) per
+creare, modificare e visualizzare il tuo albero genealogico, con import/export **GEDCOM**.
+I dati vivono su Firebase (vedi [Accesso](#accesso) e [Salvataggio](#salvataggio)): serve
+una connessione internet, non funziona offline.
 
 ## Come si apre
-Fai **doppio clic su `index.html`** — si apre nel browser. Funziona offline.
+In locale, apri una console nella cartella del progetto ed esegui `python -m http.server`
+(o un qualsiasi server statico), poi vai su `http://localhost:8000`. **Non aprire
+`index.html` con un doppio clic**: da `file://` alcune funzioni del browser richieste da
+Firebase non funzionano. Online, l'app è pubblicata automaticamente da Vercel ad ogni
+push su GitHub.
 
 ## Cosa puoi fare
 - **+ Persona**: aggiunge una nuova persona e ne apre la scheda.
@@ -13,6 +19,7 @@ Fai **doppio clic su `index.html`** — si apre nel browser. Funziona offline.
 - **Pulsante `+` sotto ogni carta**: aggiunge rapidamente un figlio/a.
 - Nella scheda, sezione **Relazioni**:
   - **+ Coniuge/Partner**, **+ Figlio/a**, **+ Genitori**
+  - Sulla riga di un coniuge, **+/✎ matrimonio** apre data e luogo del matrimonio.
   - **Scollega** per rimuovere una relazione (la persona non viene eliminata).
   - Clic sul nome di un parente per saltare alla sua scheda.
 - **Importa GEDCOM**: carica un file `.ged` (formato standard di MyHeritage, Ancestry, ecc.).
