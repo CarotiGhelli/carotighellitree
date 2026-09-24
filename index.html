@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Albero Genealogico — Caroti Ghelli</title>
-  <link rel="stylesheet" href="styles.css?v=16" />
+  <link rel="stylesheet" href="styles.css?v=17" />
 </head>
 <body>
 
@@ -30,37 +30,42 @@
 
       <button id="btnAdd" class="btn btn-primary">+ Persona</button>
 
-      <label class="btn" title="Importa un file GEDCOM (.ged)">
-        Importa GEDCOM
-        <input type="file" id="fileGedcom" accept=".ged,.gedcom,text/plain" hidden />
-      </label>
-      <button id="btnExportGed" class="btn">Esporta GEDCOM</button>
+      <!-- Su schermi stretti questo blocco si raccoglie in un menu "⋯" (vedi CSS/JS):
+           solo ricerca, modalità, + Persona, zoom e login restano sempre visibili. -->
+      <div id="moreMenu" class="more-menu">
+        <label class="btn" title="Importa un file GEDCOM (.ged)">
+          Importa GEDCOM
+          <input type="file" id="fileGedcom" accept=".ged,.gedcom,text/plain" hidden />
+        </label>
+        <button id="btnExportGed" class="btn">Esporta GEDCOM</button>
 
-      <span class="sep"></span>
+        <span class="sep"></span>
 
-      <button id="btnExportJson" class="btn">Backup</button>
-      <label class="btn">
-        Ripristina
-        <input type="file" id="fileJson" accept=".json,application/json" hidden />
-      </label>
+        <button id="btnExportJson" class="btn">Backup</button>
+        <label class="btn">
+          Ripristina
+          <input type="file" id="fileJson" accept=".json,application/json" hidden />
+        </label>
 
-      <span class="sep"></span>
+        <span class="sep"></span>
 
-      <button id="btnSelect" class="btn btn-icon" title="Seleziona più persone ed eliminale insieme">☑️</button>
-      <button id="btnPath" class="btn btn-icon" title="Evidenzia il legame di parentela tra due persone">🧭</button>
-      <button id="btnStats" class="btn btn-icon" title="Statistiche e compleanni">📊</button>
-      <button id="btnHistory" class="btn btn-icon" title="Cronologia delle modifiche">🕐</button>
-      <button id="btnPng" class="btn btn-icon" title="Scarica un'immagine PNG dell'albero">📷</button>
+        <button id="btnSelect" class="btn btn-icon" title="Seleziona più persone ed eliminale insieme">☑️<span class="more-label">Seleziona</span></button>
+        <button id="btnPath" class="btn btn-icon" title="Evidenzia il legame di parentela tra due persone">🧭<span class="more-label">Percorso</span></button>
+        <button id="btnStats" class="btn btn-icon" title="Statistiche e compleanni">📊<span class="more-label">Statistiche</span></button>
+        <button id="btnHistory" class="btn btn-icon" title="Cronologia delle modifiche">🕐<span class="more-label">Cronologia</span></button>
+        <button id="btnPng" class="btn btn-icon" title="Scarica un'immagine PNG dell'albero">📷<span class="more-label">Esporta PNG</span></button>
 
-      <span class="sep"></span>
+        <span class="sep"></span>
+
+        <button id="btnReset" class="btn btn-danger">Svuota</button>
+      </div>
+      <button id="btnMoreToggle" class="btn btn-icon more-toggle" title="Altre azioni">⋯</button>
 
       <div class="zoom-group">
         <button id="btnZoomOut" class="btn btn-icon" title="Riduci">−</button>
         <button id="btnZoomReset" class="btn btn-icon" title="Adatta">⤢</button>
         <button id="btnZoomIn" class="btn btn-icon" title="Ingrandisci">+</button>
       </div>
-
-      <button id="btnReset" class="btn btn-danger">Svuota</button>
 
       <span class="sep"></span>
 
@@ -183,7 +188,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
 
   <script src="firebase-config.js"></script>
-  <script src="gedcom.js?v=16"></script>
-  <script src="app.js?v=16"></script>
+  <script src="gedcom.js?v=17"></script>
+  <script src="app.js?v=17"></script>
 </body>
 </html>

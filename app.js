@@ -1928,6 +1928,16 @@
 
   // ============================================================ EVENTI UI
   function bindUI() {
+    // Menu "⋯" (mobile): raccoglie le azioni secondarie della toolbar. Su desktop
+    // il pulsante è nascosto via CSS e questo codice non ha alcun effetto visibile.
+    const moreToggle = $("#btnMoreToggle"), moreMenu = $("#moreMenu");
+    if (moreToggle && moreMenu) {
+      moreToggle.addEventListener("click", (e) => { e.stopPropagation(); moreMenu.classList.toggle("open"); });
+      moreMenu.addEventListener("click", (e) => { if (e.target.closest("button, label")) moreMenu.classList.remove("open"); });
+      document.addEventListener("click", (e) => {
+        if (moreMenu.classList.contains("open") && !moreMenu.contains(e.target) && e.target !== moreToggle) moreMenu.classList.remove("open");
+      });
+    }
     $("#btnAdd").addEventListener("click", () => {
       if (!ensureCanEdit()) return;
       const p = createPerson({ first: "Nuova", last: "Persona" });
