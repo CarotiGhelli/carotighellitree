@@ -326,6 +326,12 @@ html, body {
 .hist-who { font-weight: 700; white-space: nowrap; }
 .hist-what { color: #3c4c5c; }
 
+/* Versioni salvate (backup automatico) */
+.ver-row { display: flex; gap: 10px; padding: 7px 4px; border-bottom: 1px dashed #e3e9ee; font-size: 13px; align-items: center; }
+.ver-when { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.ver-who { font-weight: 700; white-space: nowrap; }
+.ver-what { color: #3c4c5c; flex: 1; }
+
 /* Evidenziazione persona trovata */
 @keyframes flashCard {
   0%, 100% { box-shadow: var(--shadow); }

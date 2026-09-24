@@ -6,6 +6,13 @@ service cloud.firestore {
   match /databases/{database}/documents {
     match /trees/{treeId} {
       allow read, write: if true;
+
+      // Versioni salvate automaticamente ad ogni scrittura (vedi app.js: saveVersionSnapshot),
+      // usate per "Ripristina" e come backup di recupero. Stesso livello di accesso del documento
+      // principale.
+      match /versions/{versionId} {
+        allow read, write: if true;
+      }
     }
   }
 }

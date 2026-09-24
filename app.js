@@ -120,6 +120,13 @@
   function saveView() { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) {} }
   function loadView() { try { const v = JSON.parse(localStorage.getItem(VIEW_KEY) || "null"); if (v) Object.assign(view, v); } catch (_) {} }
 
+  // Copia indipendente (non condivide riferimenti con lo stato live), usata per i
+  // pacchetti da scrivere su Firestore: eventuali modifiche locali fatte mentre il
+  // salvataggio è in corso non alterano più i dati già inviati.
+  function deepClone(x) {
+    try { return structuredClone(x); } catch (_) { return JSON.parse(JSON.stringify(x)); }
+  }
+
   function save(label) {
     if (!window.db) return;
     clearTimeout(saveTimer);
@@ -127,6 +134,8 @@
     saveTimer = setTimeout(() => {
       const who = getUserName();
       const what = label || "Modifica";
+      const persons = deepClone(state.persons);
+      const families = deepClone(state.families);
       const docRef = window.db.collection("trees").doc("main");
       // Transazione: legge la versione (rev) attuale sul server e scrive solo se
       // combacia con l'ultima versione vista da questo dispositivo. Se nel frattempo
@@ -143,9 +152,7 @@
         const newRev = serverRev + 1;
         const newHistory = historyLog.concat([{ t: Date.now(), who, a: what }]).slice(-100);
         tx.set(docRef, {
-          persons: state.persons,
-          families: state.families,
-          seq,
+          persons, families, seq,
           history: newHistory,
           rev: newRev,
           updatedBy: who,
@@ -158,6 +165,10 @@
           historyLog = newHistory;
           saveTimer = null;
           showToast("Salvato ✓");
+          // Backup automatico: copia indipendente di questa versione, così anche uno
+          // "Svuota" o una modifica sbagliata restano recuperabili. Non blocca l'utente:
+          // se fallisce, il salvataggio principale (già andato a buon fine) non è toccato.
+          saveVersionSnapshot(newRev, { persons, families, seq }, who, what);
         })
         .catch((e) => {
           saveTimer = null;
@@ -165,6 +176,67 @@
           else { console.warn("Firestore save failed", e); showToast("Errore salvataggio"); }
         });
     }, 1200);
+  }
+
+  // ============================================================ VERSIONI SALVATE (backup automatico)
+  // Ad ogni salvataggio riuscito, una copia indipendente dei dati finisce in
+  // trees/main/versions/{rev}. Si tengono solo le ultime MAX_VERSIONS, per non far
+  // crescere il database all'infinito. Serve per recuperare dati persi (bug, errori,
+  // "Svuota" per sbaglio) anche senza un backup JSON manuale.
+  const MAX_VERSIONS = 20;
+  function versionsCollection() { return window.db.collection("trees").doc("main").collection("versions"); }
+
+  function saveVersionSnapshot(rev, snapshot, who, what) {
+    if (!window.db) return;
+    const docId = String(rev).padStart(8, "0"); // ordinabile anche come stringa
+    versionsCollection().doc(docId).set({
+      rev,
+      persons: snapshot.persons,
+      families: snapshot.families,
+      seq: snapshot.seq,
+      who,
+      what,
+      savedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    })
+      .then(pruneOldVersions)
+      .catch((e) => console.warn("Backup automatico della versione fallito (non blocca il salvataggio)", e));
+  }
+
+  function pruneOldVersions() {
+    if (!window.db) return;
+    versionsCollection().orderBy("rev", "desc").get()
+      .then((snap) => {
+        const extra = snap.docs.slice(MAX_VERSIONS);
+        if (!extra.length) return;
+        const batch = window.db.batch();
+        extra.forEach((d) => batch.delete(d.ref));
+        return batch.commit();
+      })
+      .catch((e) => console.warn("Pulizia delle vecchie versioni fallita", e));
+  }
+
+  // Elenco delle ultime versioni salvate, per la modale Cronologia. Restituisce una
+  // Promise che risolve in un array di { id, rev, who, what, savedAt, persons, families, seq }.
+  function listRecentVersions() {
+    if (!window.db) return Promise.resolve([]);
+    return versionsCollection().orderBy("rev", "desc").limit(MAX_VERSIONS).get()
+      .then((snap) => snap.docs.map((d) => Object.assign({ id: d.id }, d.data())))
+      .catch((e) => { console.warn("Impossibile leggere le versioni salvate", e); return []; });
+  }
+
+  // Ripristina una versione salvata: sostituisce lo stato corrente con quello della
+  // versione scelta e lo salva come NUOVA revisione (la versione originale resta intatta
+  // nello storico, non viene toccata: si può sempre tornare indietro di nuovo).
+  function restoreVersion(v) {
+    if (!ensureCanEdit()) return;
+    const when = v.savedAt && v.savedAt.toDate ? v.savedAt.toDate() : null;
+    const whenStr = when ? new Intl.DateTimeFormat("it-IT", { dateStyle: "short", timeStyle: "short" }).format(when) : "";
+    if (!confirm(`Ripristinare l'albero allo stato salvato ${whenStr ? `il ${whenStr}` : ""} (${v.persons.length} persone)?\n\nLo stato attuale non andrà perso: diventerà a sua volta una versione recuperabile.`)) return;
+    state = { persons: deepClone(v.persons), families: deepClone(v.families) };
+    seq = typeof v.seq === "number" ? v.seq : seq;
+    save(`Ripristino alla versione del ${whenStr || v.id}`);
+    render();
+    closeModal();
   }
 
   let seededOnce = false;
@@ -1476,10 +1548,34 @@
   function openHistory() {
     const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "short", timeStyle: "short" });
     const rows = historyLog.slice().reverse();
-    const html = rows.length
+    const histHtml = rows.length
       ? rows.map((h) => `<div class="hist-row"><span class="hist-when">${fmt.format(new Date(h.t))}</span><span class="hist-who">${escapeHtml(h.who || "?")}</span><span class="hist-what">${escapeHtml(h.a || "")}</span></div>`).join("")
       : `<p class="focus-none">Nessuna modifica registrata finora. Da adesso ogni modifica verrà annotata qui, con nome e data.</p>`;
+    const html = `<div class="focus-sect"><h4>Ultime modifiche</h4>${histHtml}</div>` +
+      `<div class="focus-sect"><h4>Versioni salvate (backup automatico)</h4><div id="verList"><p class="focus-none">Caricamento…</p></div></div>`;
     openModal("Cronologia modifiche", html);
+
+    // Elenco versioni caricato in modo asincrono da Firestore (sottocollezione versions).
+    listRecentVersions().then((versions) => {
+      const el = $("#modalBody #verList");
+      if (!el) return; // la modale è stata chiusa o sostituita nel frattempo
+      if (!versions.length) {
+        el.innerHTML = `<p class="focus-none">Ancora nessuna versione salvata: verranno create automaticamente dai prossimi salvataggi.</p>`;
+        return;
+      }
+      el.innerHTML = versions.map((v, i) => {
+        const when = v.savedAt && v.savedAt.toDate ? fmt.format(v.savedAt.toDate()) : "—";
+        return `<div class="ver-row">
+          <span class="ver-when">${when}</span>
+          <span class="ver-who">${escapeHtml(v.who || "?")}</span>
+          <span class="ver-what">${escapeHtml(v.what || "")} · ${(v.persons || []).length} persone</span>
+          <button class="btn btn-sm" data-idx="${i}">Ripristina</button>
+        </div>`;
+      }).join("");
+      el.querySelectorAll("button[data-idx]").forEach((btn) => {
+        btn.addEventListener("click", () => restoreVersion(versions[+btn.dataset.idx]));
+      });
+    });
   }
 
   // ============================================================ SELEZIONE MULTIPLA
