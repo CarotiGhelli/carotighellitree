@@ -1,5 +1,5 @@
 /* app.js — Albero Genealogico
- * Dati: Firestore (sync real-time) — nessun login richiesto
+ * Dati: Firestore (sync real-time) — lettura libera, scrittura riservata (login Google)
  * Viewport (zoom/pan): localStorage per-dispositivo
  */
 (function () {
@@ -68,33 +68,84 @@
     el.appendChild(btn);
   }
 
-  // ============================================================ PIN DI FAMIGLIA (protezione scrittura)
-  // Chiunque può GUARDARE l'albero; per MODIFICARE serve questo PIN (chiesto una sola
-  // volta per dispositivo). Per cambiarlo, modifica la riga qui sotto.
-  const FAMILY_PIN = "ghelli";
-  const PIN_KEY = "albero-pin-v1";
+  // ============================================================ ACCESSO (login Google, protezione scrittura)
+  // Chiunque abbia il link può GUARDARE l'albero senza accedere. Per MODIFICARE serve
+  // accedere con un account Google presente nell'elenco qui sotto. L'elenco è solo per
+  // l'interfaccia (mostrare subito un avviso chiaro): la protezione vera è nelle regole
+  // Firestore (firestore.rules), che il server verifica comunque ad ogni scrittura.
+  // Per aggiungere un familiare: aggiungi la sua email sia qui sia in firestore.rules,
+  // poi incolla di nuovo le regole in Firebase Console → Firestore → Regole.
+  const ALLOWED_EDITOR_EMAILS = ["pietrocarotighelli@gmail.com"];
+  let currentUser = null; // firebase.User corrente, o null se non autenticato
+
+  function isAuthorizedEditor(u) {
+    return !!(u && u.email && ALLOWED_EDITOR_EMAILS.includes(u.email.toLowerCase()));
+  }
+
+  function signInWithGoogle() {
+    if (!window.auth) return;
+    const provider = new firebase.auth.GoogleAuthProvider();
+    window.auth.signInWithPopup(provider)
+      .then(() => showToast("Accesso effettuato ✓ — riprova l'operazione."))
+      .catch((e) => {
+        if (e && e.code === "auth/popup-closed-by-user") return;
+        console.warn("Accesso Google fallito", e);
+        showToast("Accesso non riuscito");
+      });
+  }
+  function signOutGoogle() { if (window.auth) window.auth.signOut(); }
+
+  // Usata da tutte le azioni che modificano i dati. Se l'utente non è autenticato,
+  // avvia il login e interrompe l'azione corrente: l'utente dovrà ripeterla dopo aver
+  // effettuato l'accesso (i popup di login sono asincroni, l'azione in corso è sincrona).
   function ensureCanEdit() {
-    try { if (localStorage.getItem(PIN_KEY) === FAMILY_PIN) return true; } catch (_) {}
-    const p = prompt("PIN di famiglia per modificare l'albero:");
-    if (p === null) return false;
-    if (p.trim().toLowerCase() === FAMILY_PIN) {
-      try { localStorage.setItem(PIN_KEY, FAMILY_PIN); } catch (_) {}
-      return true;
+    if (isAuthorizedEditor(currentUser)) return true;
+    if (currentUser) {
+      alert(`L'account "${currentUser.email}" non è autorizzato a modificare questo albero.\nPuoi comunque consultarlo liberamente.`);
+      return false;
     }
-    alert("PIN errato. Puoi comunque consultare l'albero, ma non modificarlo.");
+    signInWithGoogle();
     return false;
   }
 
-  // Nome di chi modifica (per la cronologia), chiesto una sola volta per dispositivo
-  const USER_KEY = "albero-user-name";
+  // Nome/email di chi modifica (per la cronologia), preso dall'account Google autenticato
   function getUserName() {
-    let n = "";
-    try { n = localStorage.getItem(USER_KEY) || ""; } catch (_) {}
-    if (!n) {
-      n = (prompt("Il tuo nome (comparirà nella cronologia delle modifiche):") || "Anonimo").trim() || "Anonimo";
-      try { localStorage.setItem(USER_KEY, n); } catch (_) {}
+    if (!currentUser) return "Anonimo";
+    return currentUser.displayName || currentUser.email || "Anonimo";
+  }
+
+  function renderAuthUI() {
+    const el = $("#authArea");
+    if (!el) return;
+    el.innerHTML = "";
+    if (currentUser && isAuthorizedEditor(currentUser)) {
+      const span = document.createElement("span");
+      span.className = "auth-who";
+      span.textContent = `👤 ${currentUser.displayName || currentUser.email}`;
+      const btn = document.createElement("button");
+      btn.className = "btn btn-sm"; btn.textContent = "Esci";
+      btn.addEventListener("click", signOutGoogle);
+      el.appendChild(span); el.appendChild(btn);
+    } else if (currentUser) {
+      const span = document.createElement("span");
+      span.className = "auth-who auth-unauthorized";
+      span.title = "Questo account non è autorizzato a modificare l'albero";
+      span.textContent = `👤 ${currentUser.email} (sola lettura)`;
+      const btn = document.createElement("button");
+      btn.className = "btn btn-sm"; btn.textContent = "Esci";
+      btn.addEventListener("click", signOutGoogle);
+      el.appendChild(span); el.appendChild(btn);
+    } else {
+      const btn = document.createElement("button");
+      btn.className = "btn btn-sm"; btn.textContent = "Accedi con Google";
+      btn.addEventListener("click", signInWithGoogle);
+      el.appendChild(btn);
     }
-    return n;
+  }
+
+  function initAuth() {
+    if (!window.auth) return;
+    window.auth.onAuthStateChanged((u) => { currentUser = u; renderAuthUI(); });
   }
 
   // ============================================================ DATE (anno, giorno/mese, età)
@@ -1916,6 +1967,7 @@
     loadLineage();
     loadViewState();
     fixViewportTop();
+    initAuth();
     startListening();
     window.__exportPNG = exportPNG; // usato solo per le verifiche automatiche
   }

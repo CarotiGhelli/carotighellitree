@@ -21,9 +21,17 @@ Fai **doppio clic su `index.html`** — si apre nel browser. Funziona offline.
 - **Zoom** `+ / − / ⤢` (adatta), **trascina** per spostare, **rotellina** per zoomare.
 - **Svuota**: cancella tutto (fai prima un Backup!).
 
+## Accesso
+- **Consultare l'albero è libero**: chiunque abbia il link può guardarlo senza accedere.
+- **Per modificarlo** serve **accedere con Google** (pulsante "Accedi con Google" in alto a
+  destra), con un account nell'elenco delle persone autorizzate. Per aggiungere un
+  familiare, vedi le istruzioni in cima a `firestore.rules`.
+
 ## Salvataggio
-Le modifiche sono salvate **automaticamente** nel browser (localStorage). Per spostare i dati
-su un altro computer o browser usa **Esporta GEDCOM** o **Backup**.
+Le modifiche sono salvate **automaticamente** su Firebase Firestore e sincronizzate in
+tempo reale su tutti i dispositivi. Ad ogni salvataggio viene tenuta anche una copia di
+sicurezza (fino alle ultime 20 versioni, recuperabili da **Cronologia** 🕐 → **Ripristina**).
+Per un backup indipendente dal database usa comunque **Esporta GEDCOM** o **Backup**.
 
 ## File
 - `index.html` — struttura della pagina

@@ -55,6 +55,11 @@ html, body {
 .btn-icon { padding: 6px 10px; font-size: 15px; line-height: 1; }
 .zoom-group { display: inline-flex; gap: 4px; }
 
+/* Accesso (login Google) */
+.auth-area { display: inline-flex; align-items: center; gap: 8px; }
+.auth-who { font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+.auth-who.auth-unauthorized { color: var(--danger); }
+
 /* Indicatore sync */
 .sync-status {
   position: fixed; bottom: 16px; right: 16px; z-index: 30;

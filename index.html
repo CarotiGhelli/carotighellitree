@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Albero Genealogico — Caroti Ghelli</title>
-  <link rel="stylesheet" href="styles.css?v=14" />
+  <link rel="stylesheet" href="styles.css?v=15" />
 </head>
 <body>
 
@@ -61,6 +61,10 @@
       </div>
 
       <button id="btnReset" class="btn btn-danger">Svuota</button>
+
+      <span class="sep"></span>
+
+      <div id="authArea" class="auth-area" title="Per modificare l'albero serve accedere con un account Google autorizzato"></div>
     </div>
   </header>
 
@@ -172,12 +176,13 @@
     </div>
   </aside>
 
-  <!-- Firebase SDKs (solo app + firestore, senza auth) -->
+  <!-- Firebase SDKs (app + firestore + auth: login Google per chi modifica) -->
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
 
   <script src="firebase-config.js"></script>
-  <script src="gedcom.js?v=14"></script>
-  <script src="app.js?v=14"></script>
+  <script src="gedcom.js?v=15"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>
