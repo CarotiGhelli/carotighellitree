@@ -934,7 +934,7 @@
       const parents = [fam.husb, fam.wife].filter((x) => x && pos[x]);
       const kids = fam.children.filter((c) => pos[c]);
       if (!parents.length || !kids.length && parents.length < 2) continue;
-      let midX, bottomY;
+      let midX, bottomY, startY; // startY: da dove parte visivamente la linea verso i figli
       const childCentersAll = kids.length ? kids.map((c) => pos[c].x + CARD_W / 2) : [];
       const childMean = childCentersAll.length ? childCentersAll.reduce((a, b) => a + b, 0) / childCentersAll.length : null;
       if (parents.length === 2 && Math.abs(pos[parents[0]].y - pos[parents[1]].y) < 4) {
@@ -944,19 +944,20 @@
         if (adjacent) {
           segs.push({ x1: lp.x + CARD_W, y1: lp.y + CARD_H / 2, x2: rp.x, y2: rp.y + CARD_H / 2 });
           midX = (lp.x + CARD_W + rp.x) / 2; bottomY = lp.y + CARD_H;
+          startY = lp.y + CARD_H / 2; // parte dal collegamento tra i coniugi: niente vuoto tra le due carte
         } else {
           // Coppia "spezzata" (es. matrimonio multiplo): niente linea orizzontale lunga.
           // Aggancio i figli al genitore più vicino a loro.
           const pick = childMean == null ? a : [a, b].reduce((u, v) => Math.abs((v.x + CARD_W / 2) - childMean) < Math.abs((u.x + CARD_W / 2) - childMean) ? v : u);
-          midX = pick.x + CARD_W / 2; bottomY = pick.y + CARD_H;
+          midX = pick.x + CARD_W / 2; bottomY = pick.y + CARD_H; startY = bottomY;
         }
       } else {
-        midX = pos[parents[0]].x + CARD_W / 2; bottomY = pos[parents[0]].y + CARD_H;
+        midX = pos[parents[0]].x + CARD_W / 2; bottomY = pos[parents[0]].y + CARD_H; startY = bottomY;
       }
       if (!kids.length) continue;
       const childTop = Math.min(...kids.map((c) => pos[c].y));
       const centers = childCentersAll;
-      buses.push({ kids, midX, bottomY, childTop, x1: Math.min(midX, ...centers), x2: Math.max(midX, ...centers) });
+      buses.push({ kids, midX, bottomY, startY, childTop, x1: Math.min(midX, ...centers), x2: Math.max(midX, ...centers) });
     }
 
     // Ogni famiglia ha la sua CORSIA: famiglie che scendono nella stessa riga e sono
@@ -983,7 +984,7 @@
       }
     }
     for (const b of buses) {
-      segs.push({ x1: b.midX, y1: b.bottomY, x2: b.midX, y2: b.busY });
+      segs.push({ x1: b.midX, y1: b.startY, x2: b.midX, y2: b.busY });
       segs.push({ x1: b.x1, y1: b.busY, x2: b.x2, y2: b.busY });
       for (const c of b.kids) {
         const cx = pos[c].x + CARD_W / 2;
