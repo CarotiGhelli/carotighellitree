@@ -198,21 +198,6 @@ html, body {
 .card.lineage-hi { box-shadow: 0 0 0 3px rgba(255,152,0,.6); z-index: 4; }
 .card-enter { opacity: 0; transform: scale(.9); }
 
-/* Barra azioni rapide (hover) */
-.quick-actions {
-  position: absolute; left: calc(100% + 5px); top: 0;
-  display: flex; flex-direction: column; gap: 4px;
-  opacity: 0; pointer-events: none; transition: opacity .12s; z-index: 8;
-}
-.card:hover .quick-actions { opacity: 1; pointer-events: auto; }
-.quick-actions button {
-  width: 26px; height: 26px; border-radius: 50%;
-  border: 1px solid var(--line); background: #fff; cursor: pointer;
-  font-size: 13px; line-height: 1; box-shadow: var(--shadow);
-  display: flex; align-items: center; justify-content: center;
-}
-.quick-actions button:hover { background: var(--accent); border-color: var(--accent); filter: saturate(1.2); }
-
 /* Minimappa */
 .minimap {
   position: absolute; right: 12px; bottom: 12px; z-index: 15;
@@ -430,6 +415,5 @@ html, body {
   .minimap { display: none; }
   .view-modes .vm { padding: 8px 8px; font-size: 12px; }
   .focus-label { display: none; }
-  .quick-actions { flex-direction: row; left: 0; top: calc(100% + 5px); }
 
 }

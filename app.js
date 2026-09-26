@@ -1118,18 +1118,6 @@
       }
     }
 
-    // Barra azioni rapide (compare al passaggio del mouse)
-    if (!selectMode && !pathMode) {
-      const qa = document.createElement("div");
-      qa.className = "quick-actions";
-      const mkBtn = (label, title, fn) => { const b = document.createElement("button"); b.textContent = label; b.title = title; b.addEventListener("click", (e) => { e.stopPropagation(); fn(); }); qa.appendChild(b); };
-      mkBtn("✎", "Apri scheda", () => openEditor(p.id));
-      mkBtn("＋", "Aggiungi figlio/a", () => addChildTo(p.id));
-      mkBtn("🎯", "Centra qui", () => setFocus(p.id));
-      mkBtn("👪", "Famiglia stretta", () => openFocus(p.id));
-      el.appendChild(qa);
-    }
-
     if (focusMode && info) {
       // Frecce sulla FRONTIERA: espandi dove ci sono parenti nascosti; comprimi solo
       // ciò che è stato espanso (come MyHeritage), niente "–" inutili sui nodi interni.
