@@ -55,7 +55,6 @@ html, body {
 .btn-danger:hover { background: #fdf2f1; }
 .btn-sm { padding: 5px 9px; font-size: 12px; }
 .btn-icon { padding: 6px 10px; font-size: 15px; line-height: 1; }
-.zoom-group { display: inline-flex; gap: 4px; }
 
 /* Menu "⋯" (azioni secondarie): su desktop è invisibile come contenitore — i suoi
    figli restano semplici elementi della toolbar, esattamente come prima. Diventa un

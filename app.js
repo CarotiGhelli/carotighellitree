@@ -2174,9 +2174,6 @@
       };
       reader.readAsText(file); e.target.value = "";
     });
-    $("#btnZoomIn").addEventListener("click", () => zoomAt(viewportEl.clientWidth / 2, viewportEl.clientHeight / 2, 1.15));
-    $("#btnZoomOut").addEventListener("click", () => zoomAt(viewportEl.clientWidth / 2, viewportEl.clientHeight / 2, 1 / 1.15));
-    $("#btnZoomReset").addEventListener("click", fitToScreen);
     $("#btnReset").addEventListener("click", () => {
       if (!ensureCanEdit()) return;
       if (confirm("Cancellare tutto l'albero? Fai prima un Backup.")) {
