@@ -10,6 +10,9 @@
   // documento Firestore separato (trees/test) invece che su quello vero (trees/main):
   // utile per testare senza rischiare i dati reali. Un banner in alto lo ricorda sempre.
   const TREE_DOC_ID = new URLSearchParams(location.search).get("db") === "test" ? "test" : "main";
+  // Metti true quando Firebase Storage è attivo (piano Blaze) e le regole storage.rules
+  // sono pubblicate: solo allora il caricamento delle foto può funzionare.
+  const PHOTOS_ENABLED = false;
   const VIEW_KEY = "albero-view-v1";
   let state = { persons: [], families: [] };
   let seq = 1;
@@ -1666,6 +1669,40 @@
     return out;
   }
 
+  // Anniversari di matrimonio nei prossimi `days` giorni: solo coppie con data di
+  // matrimonio (giorno e mese riconoscibili) e con entrambi i coniugi in vita.
+  function upcomingAnniversaries(days) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const out = [];
+    for (const f of state.families) {
+      const h = findPerson(f.husb), w = findPerson(f.wife);
+      if (!h || !w || h.deceased || h.death || w.deceased || w.death) continue;
+      const dm = dayMonthOf(f.marriageDate); if (!dm) continue;
+      let next = new Date(today.getFullYear(), dm.m - 1, dm.d);
+      if (next < today) next = new Date(today.getFullYear() + 1, dm.m - 1, dm.d);
+      const diff = Math.round((next - today) / 86400000);
+      if (diff > days) continue;
+      const my = yearOf(f.marriageDate);
+      const years = my != null ? next.getFullYear() - my : null;
+      if (years != null && years > 90) continue;
+      out.push({ h, w, next, diff, years });
+    }
+    out.sort((a, b) => a.diff - b.diff);
+    return out;
+  }
+
+  // Schede da completare: prima quelle senza nome, poi quelle senza data di nascita.
+  function incompletePersons() {
+    const out = [];
+    for (const p of state.persons) {
+      const noName = !(p.first || "").trim() && !(p.last || "").trim();
+      const noBirth = !(p.birth || "").trim();
+      if (noName || noBirth) out.push({ p, noName, noBirth });
+    }
+    out.sort((a, b) => (b.noName - a.noName));
+    return out;
+  }
+
   function openStats() {
     const ps = state.persons;
     const male = ps.filter((p) => p.sex === "M").length;
@@ -1693,10 +1730,24 @@
         ? bd.slice(0, 12).map((b) => miniPersonHtml(b.p, `${fmt.format(b.next)}${b.turns != null ? ` · compie ${b.turns}` : ""}${b.diff === 0 ? " · OGGI 🎂" : ""}`)).join("")
         : `<p class="focus-none">Nessun compleanno imminente (o date senza giorno e mese).</p>`) +
       `</div>`;
+    const an = upcomingAnniversaries(60);
+    html += `<div class="focus-sect"><h4>Anniversari di matrimonio nei prossimi 60 giorni</h4>` +
+      (an.length
+        ? an.slice(0, 12).map((a) => miniPersonHtml(a.h, `💍 con ${fullName(a.w)} · ${fmt.format(a.next)}${a.years != null ? ` · ${a.years} anni` : ""}${a.diff === 0 ? " · OGGI" : ""}`)).join("")
+        : `<p class="focus-none">Nessun anniversario imminente (servono data di matrimonio e coniugi in vita: si inserisce dalla scheda, riga coniuge).</p>`) +
+      `</div>`;
+    const inc = incompletePersons();
+    html += `<div class="focus-sect"><h4>Schede da completare (${inc.length})</h4>` +
+      (inc.length
+        ? inc.slice(0, 40).map((x) => miniPersonHtml(x.p, x.noName ? "senza nome" : "senza data di nascita").replace('class="mini-person"', 'class="mini-person" data-edit="1"')).join("") +
+          (inc.length > 40 ? `<p class="focus-none">…e altre ${inc.length - 40}.</p>` : "")
+        : `<p class="focus-none">Tutte le schede hanno nome e data di nascita 🎉</p>`) +
+      `</div>`;
     const body = openModal("Statistiche", html);
     body.querySelectorAll(".mini-person").forEach((row) => row.addEventListener("click", () => {
       closeModal();
       const id = row.dataset.id;
+      if (row.dataset.edit) { openEditor(id); return; } // schede da completare: apri direttamente la scheda
       if (lastLayout && lastLayout.pos[id]) centerOnPerson(id); else openFocus(id);
     }));
   }
@@ -2111,6 +2162,7 @@
 
   // ============================================================ AVVIO
   function init() {
+    if (!PHOTOS_ENABLED) { const pr = document.querySelector(".photo-row"); if (pr) pr.hidden = true; }
     if (TREE_DOC_ID === "test") { const b = $("#testBanner"); if (b) b.hidden = false; document.title = "🧪 TEST — " + document.title; }
     bindUI();
     setupPanZoom();
