@@ -175,6 +175,54 @@
     const a = end - by;
     return (a >= 0 && a < 130) ? a : null;
   }
+  // ---- Date guidate: giorno / mese / anno / "circa" sincronizzati col campo di testo ----
+  // Il campo di testo resta la fonte di verità (compatibile con i dati esistenti e con
+  // GEDCOM); i riquadri lo compilano nel formato standard "12 MAR 1950" / "ABT 1950".
+  const GED_MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+  const IT_MONTHS = ["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","agosto","settembre","ottobre","novembre","dicembre"];
+  function parseGuidedDate(text) {
+    const t = String(text || "").trim();
+    if (!t) return { d: "", m: "", y: "", c: false };
+    let m = t.match(/^(?:(ABT|CIRCA|CA\.?|~)\s*)?(?:(\d{1,2})\s+)?(?:([A-Za-z]{3,})\s+)?(\d{3,4})$/i);
+    if (m) {
+      const mon = m[3] ? MONTHS[m[3].slice(0, 3).toUpperCase()] : null;
+      if (m[3] && !mon) return null;
+      if (m[2] && !mon) return null; // giorno senza mese: non è una data completa
+      return { d: m[2] ? String(+m[2]) : "", m: mon ? GED_MONTHS[mon - 1] : "", y: m[4], c: !!m[1] };
+    }
+    m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{3,4})$/);
+    if (m && +m[1] >= 1 && +m[1] <= 31 && +m[2] >= 1 && +m[2] <= 12) return { d: String(+m[1]), m: GED_MONTHS[+m[2] - 1], y: m[3], c: false };
+    return null; // formato libero non riconosciuto: si lascia il testo com'è
+  }
+  function composeGuidedDate(v) {
+    if (!v.y) return "";
+    return (v.c ? "ABT " : "") + [v.d && v.m ? v.d : "", v.m, v.y].filter(Boolean).join(" ");
+  }
+  function setupDateHelper(inputId) {
+    const input = $("#" + inputId);
+    const box = document.createElement("div"); box.className = "date-helper";
+    box.innerHTML = `<input type="number" class="dh-d" min="1" max="31" placeholder="gg" />
+      <select class="dh-m"><option value="">mese</option>${GED_MONTHS.map((g, i) => `<option value="${g}">${IT_MONTHS[i]}</option>`).join("")}</select>
+      <input type="number" class="dh-y" min="1000" max="2100" placeholder="anno" />
+      <label class="dh-c-lbl"><input type="checkbox" class="dh-c" /> circa</label>`;
+    input.parentElement.appendChild(box);
+    const q = (c) => box.querySelector(c);
+    const fromHelper = () => {
+      input.value = composeGuidedDate({ d: q(".dh-d").value, m: q(".dh-m").value, y: q(".dh-y").value, c: q(".dh-c").checked });
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    box.addEventListener("input", fromHelper); box.addEventListener("change", fromHelper);
+    const toHelper = () => {
+      const v = parseGuidedDate(input.value);
+      box.classList.toggle("dh-off", !v); // testo libero non riconosciuto: riquadri spenti
+      const x = v || { d: "", m: "", y: "", c: false };
+      q(".dh-d").value = x.d; q(".dh-m").value = x.m; q(".dh-y").value = x.y; q(".dh-c").checked = x.c;
+    };
+    input.addEventListener("input", (e) => { if (e.isTrusted !== false) toHelper(); });
+    return toHelper;
+  }
+  let dateHelpersSync = [];
+
   // Solo un avviso "morbido" nell'editor: il campo resta testo libero (compatibile con
   // GEDCOM e con date incerte tipo "verso il 1920"), ma se non troviamo un anno
   // plausibile età e compleanni non si potranno calcolare, quindi lo segnaliamo.
@@ -1288,6 +1336,7 @@
     $("#fBirth").value = p.birth || ""; $("#fBirthPlace").value = p.birthPlace || "";
     $("#fDeath").value = p.death || ""; $("#fDeathPlace").value = p.deathPlace || "";
     $("#fNotes").value = p.notes || "";
+    dateHelpersSync.forEach((f) => f());
     $("#fBirthHint").hidden = looksLikeValidDate(p.birth);
     $("#fDeathHint").hidden = looksLikeValidDate(p.death);
     updatePhotoPreview(); renderRelations(p);
@@ -2080,6 +2129,7 @@
     $("#editorClose").addEventListener("click", closeEditor);
     $("#overlay").addEventListener("click", closeEditor);
     $("#btnSave").addEventListener("click", () => saveCurrent(false));
+    dateHelpersSync = [setupDateHelper("fBirth"), setupDateHelper("fDeath")];
     $("#fBirth").addEventListener("input", (e) => { $("#fBirthHint").hidden = looksLikeValidDate(e.target.value); });
     $("#fDeath").addEventListener("input", (e) => { $("#fDeathHint").hidden = looksLikeValidDate(e.target.value); });
     $("#btnDelete").addEventListener("click", () => {

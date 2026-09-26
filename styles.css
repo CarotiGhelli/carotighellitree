@@ -273,6 +273,12 @@ html, body {
 }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
+.date-helper { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 4px; }
+.date-helper input[type=number], .date-helper select { padding: 5px 6px; font-size: 12.5px; border-radius: 6px; }
+.date-helper .dh-d { width: 52px; } .date-helper .dh-y { width: 68px; } .date-helper .dh-m { flex: 1; min-width: 80px; }
+.date-helper .dh-c-lbl { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 3px; }
+.date-helper .dh-c-lbl input { padding: 0; }
+.date-helper.dh-off { opacity: .45; }
 .field-hint { color: #a06a00; font-size: 11px; }
 .relations { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; margin-top: 6px; }
 .relations legend { font-size: 12px; font-weight: 700; color: var(--muted); padding: 0 6px; }
