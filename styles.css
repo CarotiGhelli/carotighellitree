@@ -35,7 +35,9 @@ html, body {
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; }
 .logo { font-size: 22px; }
 .brand-text { font-size: 17px; }
-.toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; justify-content: flex-end; min-width: 0; }
+.focus-label { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1250px) { .brand-text, .focus-label { display: none; } }
 .sep { width: 1px; height: 26px; background: var(--line); }
 
 .btn {
@@ -58,9 +60,20 @@ html, body {
 /* Menu "⋯" (azioni secondarie): su desktop è invisibile come contenitore — i suoi
    figli restano semplici elementi della toolbar, esattamente come prima. Diventa un
    vero menu a comparsa solo sotto i 700px (vedi media query in fondo al file). */
-.more-menu { display: contents; }
-.more-toggle { display: none; }
-.more-label { display: none; }
+.more-toggle { display: inline-flex; }
+.more-label { display: inline; margin-left: 6px; }
+.more-menu {
+  display: none; position: absolute; top: calc(100% + 6px); right: 10px;
+  flex-direction: column; align-items: stretch; gap: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: var(--shadow-lg); padding: 10px; z-index: 25; min-width: 230px;
+  max-height: calc(100vh - 80px); overflow-y: auto;
+}
+.more-menu.open { display: flex; }
+.more-menu .btn { width: 100%; justify-content: flex-start; }
+.more-menu .sep { width: 100%; height: 1px; margin: 2px 0; }
+/* Svuota resta in fondo, ben separato, per evitare tocchi accidentali */
+.more-menu #btnReset { margin-top: 4px; }
 
 /* Accesso (login Google) */
 .auth-area { display: inline-flex; align-items: center; gap: 8px; }
@@ -400,7 +413,7 @@ html, body {
 /* ---------- Mobile ---------- */
 @media (max-width: 700px) {
   .toolbar { height: auto; flex-wrap: wrap; padding: 8px 10px; gap: 8px; }
-  .toolbar-actions { gap: 6px; }
+  .toolbar-actions { gap: 6px; flex-wrap: wrap; justify-content: flex-start; }
   .brand-text { display: none; }
   .btn { padding: 9px 12px; }
   .add-btn, .collapse-btn { width: 27px; height: 27px; font-size: 17px; }
@@ -413,21 +426,4 @@ html, body {
   .focus-label { display: none; }
   .quick-actions { flex-direction: row; left: 0; top: calc(100% + 5px); }
 
-  /* Menu "⋯": raccoglie import/export, backup, seleziona/percorso/statistiche/
-     cronologia/PNG e Svuota, per non far esplodere l'altezza della toolbar.
-     Restano sempre visibili: ricerca, modalità, + Persona, zoom, login. */
-  .more-toggle { display: inline-flex; }
-  .more-label { display: inline; margin-left: 6px; }
-  .more-menu {
-    display: none; position: absolute; top: calc(100% + 6px); right: 10px;
-    flex-direction: column; align-items: stretch; gap: 6px;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    box-shadow: var(--shadow-lg); padding: 10px; z-index: 25; min-width: 230px;
-    max-height: calc(100vh - 80px); overflow-y: auto;
-  }
-  .more-menu.open { display: flex; }
-  .more-menu .btn { width: 100%; justify-content: flex-start; }
-  .more-menu .sep { width: 100%; height: 1px; margin: 2px 0; }
-  /* Svuota resta in fondo, ben separato, per evitare tocchi accidentali */
-  .more-menu #btnReset { margin-top: 4px; }
 }
