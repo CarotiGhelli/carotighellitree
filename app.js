@@ -1212,6 +1212,17 @@
       applyTransform();
     });
     window.addEventListener("mouseup", () => { if (drag) { drag = false; viewportEl.classList.remove("panning"); saveView(); } });
+
+    // Doppio clic (o doppio tocco) sullo sfondo = adatta l'albero allo schermo
+    // (sostituisce il vecchio pulsante "Adatta").
+    const isBackground = (t) => !t.closest(".card, .add-btn, .collapse-btn, .minimap, .empty-hint");
+    viewportEl.addEventListener("dblclick", (e) => { if (isBackground(e.target)) fitToScreen(true); });
+    let lastTap = 0;
+    viewportEl.addEventListener("touchend", (e) => {
+      if (e.touches.length || e.changedTouches.length !== 1 || !isBackground(e.target)) return;
+      const now = Date.now();
+      if (now - lastTap < 320) { fitToScreen(true); lastTap = 0; } else lastTap = now;
+    });
     viewportEl.addEventListener("wheel", (e) => {
       e.preventDefault();
       const r = viewportEl.getBoundingClientRect();
