@@ -42,6 +42,8 @@
   }
   function findPerson(id) { return state.persons.find((p) => p.id === id); }
   function findFamily(id) { return state.families.find((f) => f.id === id); }
+  // minuscolo e senza accenti, per confronti di ricerca tolleranti
+  function norm(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
   function fullName(p) { return (`${p.first || ""} ${p.last || ""}`).trim() || "(senza nome)"; }
   function familiesAsSpouse(id) { return state.families.filter((f) => f.husb === id || f.wife === id); }
   function familyAsChild(id) { return state.families.find((f) => f.children.includes(id)); }
@@ -1540,11 +1542,18 @@
     box.addEventListener("input", () => {
       const q = box.value.trim().toLowerCase();
       if (q.length < 2) { hide(); return; }
-      const matches = state.persons.filter((p) => fullName(p).toLowerCase().includes(q)).slice(0, 8);
+      // Cerca in nome, luoghi e date; ogni parola digitata deve comparire da qualche parte
+      // (es. "rossi firenze 1950"), senza distinguere maiuscole e accenti.
+      const words = norm(q).split(/\s+/).filter(Boolean);
+      const matches = state.persons.filter((p) => {
+        const hay = norm([fullName(p), p.birthPlace, p.deathPlace, p.birth, p.death].join(" "));
+        return words.every((w) => hay.includes(w));
+      }).slice(0, 12);
       if (!matches.length) { res.innerHTML = `<div class="search-empty">Nessun risultato</div>`; res.hidden = false; return; }
       res.innerHTML = matches.map((p) => {
         const vis = lastLayout && lastLayout.pos[p.id];
-        return miniPersonHtml(p, (formatDates(p) || "") + (vis ? "" : " · nascosta"));
+        const place = [p.birthPlace, p.deathPlace].filter(Boolean).join(" → ");
+        return miniPersonHtml(p, [formatDates(p), place].filter(Boolean).join(" · ") + (vis ? "" : " · nascosta"));
       }).join("");
       res.hidden = false;
     });
@@ -1935,7 +1944,19 @@
       return ln + "…";
     });
   }
-  async function exportPNG(testOnly) {
+  // Stampa / PDF: apre l'immagine dell'albero in una pagina pronta per la stampa
+  // (adattata al foglio, orizzontale). Dalla finestra di stampa si può scegliere
+  // "Salva come PDF". Usa lo stesso disegno dell'export PNG.
+  function openPrintWindow(imgUrl) {
+    const w = window.open("", "_blank");
+    if (!w) { showToast("Il browser ha bloccato la finestra di stampa: consenti i popup per questo sito.", 6000); return; }
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Albero Genealogico</title>
+<style>@page{size:A4 landscape;margin:8mm}html,body{margin:0;background:#fff}img{display:block;max-width:100%;max-height:100vh;margin:auto}</style></head>
+<body><img src="${imgUrl}" onload="setTimeout(function(){window.print()},300)"></body></html>`);
+    w.document.close();
+  }
+
+  async function exportPNG(testOnly, asPrint) {
     if (!lastLayout || !lastLayout.width) { alert("Niente da esportare."); return null; }
     const layout = lastLayout;
     const PAD = 50;
@@ -2016,6 +2037,7 @@
           return;
         }
         const url = URL.createObjectURL(blob);
+        if (asPrint) { openPrintWindow(url); return; }
         const a = document.createElement("a");
         a.href = url; a.download = "albero-genealogico.png";
         document.body.appendChild(a); a.click(); a.remove();
@@ -2127,6 +2149,7 @@
     $("#btnStats").addEventListener("click", openStats);
     $("#btnHistory").addEventListener("click", openHistory);
     $("#btnPng").addEventListener("click", () => exportPNG());
+    $("#btnPrint").addEventListener("click", () => exportPNG(false, true));
     $("#btnPath").addEventListener("click", () => { if (pathMode) exitPathMode(); else enterPathMode(); });
     $("#btnSelect").addEventListener("click", () => { if (selectMode) exitSelectMode(); else enterSelectMode(); });
     $("#btnSelectCancel").addEventListener("click", exitSelectMode);
