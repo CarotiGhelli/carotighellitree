@@ -1281,8 +1281,16 @@
     if (!lastLayout) return;
     const vw = viewportEl.clientWidth, vh = viewportEl.clientHeight;
     const w = lastLayout.width || 1, h = lastLayout.height || 1;
-    view.scale = Math.max(0.2, Math.min(vw / (w + 80), vh / (h + 80), 1.4));
-    view.x = (vw - w * view.scale) / 2; view.y = 30;
+    // Con alberi molto larghi (tante persone in modalità "Tutto") adattare tutta la
+    // larghezza allo schermo rende le carte illeggibili (nomi ridotti a pochi pixel).
+    // Non si scende mai sotto una scala leggibile: se l'albero non entra tutto in
+    // orizzontale, resta scorribile con trascinamento/pizzico e la minimappa aiuta a
+    // orientarsi, ma quel che si vede si legge sempre.
+    const MIN_READABLE_SCALE = 0.5;
+    const fitScale = Math.min(vw / (w + 80), vh / (h + 80), 1.4);
+    view.scale = Math.max(MIN_READABLE_SCALE, fitScale);
+    view.x = (vw - w * view.scale) / 2;
+    view.y = Math.max(30, (vh - h * view.scale) / 2); // centra anche in verticale se c'è spazio
     if (animate) animateWorld();
     applyTransform(); saveView(); drawMinimap();
   }
