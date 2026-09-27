@@ -148,6 +148,16 @@ html, body {
   background: #46c07a; border: 2px solid #fff;
 }
 
+/* Indice dei capostipiti (modalità "Tutto"): numero di discendenti registrati */
+.root-card { cursor: pointer; }
+.root-card .root-count {
+  position: absolute; left: -8px; top: -8px;
+  min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
+  background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+
 .add-btn {
   position: absolute; width: 22px; height: 22px; border-radius: 50%;
   background: #fff; border: 1px solid var(--line); color: var(--accent);

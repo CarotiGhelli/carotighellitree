@@ -650,6 +650,44 @@
     return best;
   }
 
+  // ============================================================ INDICE DEI CAPOSTIPITI
+  // Modalità "Tutto": invece di disegnare le ~170 persone su un'unica striscia
+  // illeggibile, mostra un indice cliccabile delle "radici" dell'albero (persone senza
+  // genitori registrati). Un clic entra in modalità Discendenti su quella persona, dove
+  // il motore di layout a focus (già collaudato) mostra bene una singola dinastia.
+  function computeRootsLayout() {
+    const g = buildGraph();
+    const roots = state.persons.filter((p) => !familyAsChild(p.id));
+    function countDescendants(id) {
+      const seen = new Set(); const st = [...g.child[id]]; seen.add(id);
+      let n = 0;
+      while (st.length) {
+        const x = st.pop();
+        if (seen.has(x)) continue;
+        seen.add(x); n++;
+        for (const c of g.child[x]) st.push(c);
+      }
+      return n;
+    }
+    const withCount = roots.map((p) => ({ p, n: countDescendants(p.id) }));
+    // Le dinastie più numerose per prime; a parità, ordine alfabetico.
+    withCount.sort((a, b) => b.n - a.n || fullName(a.p).localeCompare(fullName(b.p), "it"));
+
+    const GAP_X = 36, GAP_Y = 50;
+    const avail = Math.max(CARD_W, (viewportEl.clientWidth || 1000) - 80);
+    const cols = Math.max(3, Math.floor((avail + GAP_X) / (CARD_W + GAP_X)));
+    const pos = {}, countsById = {};
+    withCount.forEach((x, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      pos[x.p.id] = { x: col * (CARD_W + GAP_X), y: row * (CARD_H + GAP_Y) };
+      countsById[x.p.id] = x.n;
+    });
+    const rows = Math.ceil(withCount.length / cols) || 1;
+    const width = cols * (CARD_W + GAP_X) - GAP_X;
+    const height = rows * (CARD_H + GAP_Y) - GAP_Y;
+    return { pos, segs: [], linksSvg: "", width: Math.max(width, 1), height: Math.max(height, 1), countsById, rootsCount: withCount.length };
+  }
+
   // ============================================================ LAYOUT (a livelli, stile Sugiyama)
   function computeLayout() {
     // In modalità focus la vista decide la visibilità; la linea M/F vale solo in 'all'.
@@ -1026,7 +1064,8 @@
     cardsEl.innerHTML = "";
     currentClash = computeClashMap();
     currentView = computeView();
-    const layout = computeLayout();
+    const isRootsIndex = viewState.mode === "all";
+    const layout = isRootsIndex ? computeRootsLayout() : computeLayout();
     lastLayout = layout;
     $("#emptyHint").hidden = state.persons.length > 0;
     const pad = 60;
@@ -1036,7 +1075,7 @@
     for (const p of state.persons) {
       const pp = layout.pos[p.id];
       if (!pp) continue;
-      cardsEl.appendChild(buildCard(p, pp));
+      cardsEl.appendChild(isRootsIndex ? buildRootCard(p, pp, layout.countsById[p.id] || 0) : buildCard(p, pp));
     }
     worldEl.style.width = (layout.width + pad) + "px";
     worldEl.style.height = (layout.height + pad) + "px";
@@ -1068,6 +1107,35 @@
     } else {
       linksEl.style.opacity = "1";
     }
+  }
+
+  // Carta dell'indice dei capostipiti: clic = entra nella sua famiglia (Discendenti).
+  function buildRootCard(p, pos, count) {
+    const el = document.createElement("div");
+    el.className = "card root-card " + (p.sex === "M" ? "male" : p.sex === "F" ? "female" : "unknown");
+    el.style.left = pos.x + "px"; el.style.top = pos.y + "px";
+    el.dataset.id = p.id;
+    const dates = formatDates(p);
+    const living = !p.deceased && !p.death;
+    const avatar = p.photo
+      ? `<div class="avatar" style="background-image:url('${p.photo}')"></div>`
+      : `<div class="avatar">${p.sex === "F" ? "👩" : p.sex === "M" ? "👨" : "👤"}</div>`;
+    count = count || 0;
+    el.innerHTML = `${avatar}
+      <div class="info">
+        <div class="name">${escapeHtml(fullName(p))}</div>
+        ${dates ? `<div class="dates">${escapeHtml(dates)}</div>` : ""}
+      </div>
+      ${living ? `<span class="living-dot" title="In vita"></span>` : ""}
+      <span class="edit-pencil" title="Apri scheda">✎</span>
+      ${count > 0 ? `<span class="root-count" title="${count} discendenti registrati">${count}</span>` : ""}`;
+    el.querySelector(".edit-pencil").addEventListener("click", (e) => { e.stopPropagation(); openEditor(p.id); });
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      viewState.focusId = p.id;
+      setViewMode("descendants");
+    });
+    return el;
   }
 
   function buildCard(p, pos) {
@@ -1327,10 +1395,22 @@
     document.querySelectorAll("#viewModes .vm").forEach((b) => b.classList.toggle("active", b.dataset.mode === viewState.mode));
     const lbl = document.getElementById("focusLabel");
     if (lbl) {
-      const p = viewState.focusId && findPerson(viewState.focusId);
-      const show = viewState.mode !== "all" && p;
-      lbl.hidden = !show;
-      lbl.textContent = show ? "◎ " + fullName(p) : "";
+      if (viewState.mode === "all") {
+        const n = (lastLayout && lastLayout.rootsCount) || 0;
+        lbl.hidden = false;
+        lbl.textContent = `🌳 ${n} capostipiti`;
+      } else {
+        const p = viewState.focusId && findPerson(viewState.focusId);
+        const show = !!p;
+        lbl.hidden = !show;
+        lbl.textContent = show ? "◎ " + fullName(p) : "";
+      }
+    }
+    const hint = document.querySelector(".hint-pan");
+    if (hint) {
+      hint.textContent = viewState.mode === "all"
+        ? "Trascina per spostare · rotellina/pizzico per zoom · clic su un capostipite = esplora la sua famiglia"
+        : "Trascina per spostare · rotellina/pizzico per zoom · clic = centra · doppio clic = famiglia stretta · doppio clic sullo sfondo = adatta";
     }
   }
 
@@ -1674,6 +1754,7 @@
     const visible = lastLayout && lastLayout.pos[id];
     html += `<div class="focus-actions">
       ${visible ? `<button class="btn" id="focusCenter">Mostra nell'albero</button>` : ""}
+      <button class="btn" id="focusFamily">Esplora la sua famiglia</button>
       <button class="btn btn-primary" id="focusEdit">Apri scheda</button>
     </div>`;
     const body = openModal("Famiglia di " + fullName(p), html);
@@ -1682,6 +1763,7 @@
     });
     const fc = body.querySelector("#focusCenter");
     if (fc) fc.addEventListener("click", () => { closeModal(); centerOnPerson(id); });
+    body.querySelector("#focusFamily").addEventListener("click", () => { closeModal(); viewState.focusId = id; setViewMode("descendants"); });
     body.querySelector("#focusEdit").addEventListener("click", () => { closeModal(); openEditor(id); });
   }
 
